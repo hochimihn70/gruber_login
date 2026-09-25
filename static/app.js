@@ -4,11 +4,11 @@ const totpSetupView = document.getElementById('totp-setup-view');
 const twoFactorView = document.getElementById('two-factor-view');
 const forgotView = document.getElementById('forgot-view');
 
-const loginForm = document.getElementById('login-form');
-const registerForm = document.getElementById('register-form');
-const twoFactorForm = document.getElementById('two-factor-form');
+const loginForm = document.getElementById('login-form') || document.getElementById('login');
+const registerForm = document.getElementById('register-form') || document.getElementById('register');
+const twoFactorForm = document.getElementById('two-factor-form') || document.getElementById('two-factor');
 const twoFactorInfo = document.getElementById('two-factor-info');
-const cancel2faBtn = document.getElementById('cancel-2fa-btn');
+const cancel2faBtn = document.getElementById('cancel-2fa-btn') || document.getElementById('cancel-2fa');
 
 const linkForgotPw = document.getElementById('link-forgot-pw');
 const cancelForgotBtn = document.getElementById('cancel-forgot-btn');
@@ -256,20 +256,22 @@ async function onPerformReset(event) {
 
 
 // Event Listener
-loginForm.addEventListener('submit', onLogin);
-registerForm.addEventListener('submit', onRegister);
-twoFactorForm.addEventListener('submit', onVerify2FA);
-cancel2faBtn.addEventListener('click', () => showView('main'));
+if (loginForm) loginForm.addEventListener('submit', onLogin);
+if (registerForm) registerForm.addEventListener('submit', onRegister);
+if (twoFactorForm) twoFactorForm.addEventListener('submit', onVerify2FA);
+if (cancel2faBtn) cancel2faBtn.addEventListener('click', () => showView('main'));
 
-totpDoneBtn.addEventListener('click', () => showView('main'));
+if (totpDoneBtn) totpDoneBtn.addEventListener('click', () => showView('main'));
 
-linkForgotPw.addEventListener('click', (e) => {
-  e.preventDefault();
-  forgotStep1.style.display = 'block';
-  forgotStep2.style.display = 'none';
-  showView('forgot');
-});
-cancelForgotBtn.addEventListener('click', () => showView('main'));
+if (linkForgotPw) {
+  linkForgotPw.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (forgotStep1) forgotStep1.style.display = 'block';
+    if (forgotStep2) forgotStep2.style.display = 'none';
+    showView('forgot');
+  });
+}
+if (cancelForgotBtn) cancelForgotBtn.addEventListener('click', () => showView('main'));
 
-forgotRequestForm.addEventListener('submit', onRequestReset);
-forgotResetForm.addEventListener('submit', onPerformReset);
+if (forgotRequestForm) forgotRequestForm.addEventListener('submit', onRequestReset);
+if (forgotResetForm) forgotResetForm.addEventListener('submit', onPerformReset);
