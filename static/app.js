@@ -1,72 +1,95 @@
-const statusElement = document.querySelector('#status'); // Element fuer Meldungen holen.
+const loginForm = document.getElementById('login');
+const registerForm = document.getElementById('register');
+const statusText = document.getElementById('status');
 
-function showStatus(message, type) { // Meldung anzeigen.
-  statusElement.textContent = message; // Text setzen.
-  statusElement.className = type; // CSS-Klasse fuer Erfolg oder Fehler setzen.
+
+function showMessage(text, isError) {
+  statusText.textContent = text;
+  if (isError) {
+    statusText.className = 'error';
+  } else {
+    statusText.className = 'ok';
+  }
 }
 
-async function handleFormSubmit(event) { // Login oder Registrierung bearbeiten.
-  event.preventDefault(); // Seitenneuladen verhindern.
 
-  const form = event.target; // Abgesendetes Formular holen.
-  const formData = new FormData(form); // Formularwerte sammeln.
-  const emailAddress = formData.get('email'); // E-Mail lesen.
-  const password = formData.get('password'); // Passwort lesen.
-
-  if (!emailAddress || !password) { // Leere Eingaben pruefen.
-    showStatus('Bitte E-Mail und Passwort eingeben.', 'error'); // Fehler anzeigen.
-    return; // Funktion beenden.
+// Prueft die Eingaben. Gibt eine Fehlermeldung zurueck oder '' wenn alles passt.
+function checkInput(email, password, isRegister) {
+  if (email === '' || password === '') {
+    return 'Bitte E-Mail und Passwort eingeben.';
   }
-  if (!emailAddress.includes('@')) { // Einfache E-Mail-Pruefung.
-    showStatus('Bitte eine gueltige E-Mail-Adresse eingeben.', 'error'); // Fehler anzeigen.
-    return; // Funktion beenden.
+  if (email.includes('@') === false) {
+    return 'Bitte eine gueltige E-Mail-Adresse eingeben.';
   }
-  if (form.id === 'register' && password.length < 8) { // Passwortlaenge bei Registrierung pruefen.
-    showStatus('Das Passwort muss mindestens 8 Zeichen haben.', 'error'); // Fehler anzeigen.
-    return; // Funktion beenden.
+  if (isRegister && password.length < 8) {
+    return 'Das Passwort muss mindestens 8 Zeichen haben.';
+  }
+  return '';
+}
+
+
+// Schickt E-Mail und Passwort als JSON an den Server und gibt die Antwort zurueck.
+async function sendToServer(url, email, password) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email, password: password })
+  });
+  const result = await response.json();
+  result.ok = response.ok;
+  return result;
+}
+
+
+async function onLogin(event) {
+  event.preventDefault();  // Seite nicht neu laden
+
+  const email = loginForm.email.value;
+  const password = loginForm.password.value;
+
+  const error = checkInput(email, password, false);
+  if (error !== '') {
+    showMessage(error, true);
+    return;
   }
 
-  let apiUrl = '/api/login'; // Standardmaessig Login verwenden.
-  if (form.id === 'register') { // Registrierungsformular erkennen.
-    apiUrl = '/api/register'; // Registrierungsadresse verwenden.
-  }
-
-  const requestData = { // Daten fuer FastAPI vorbereiten.
-    email: emailAddress, // E-Mail eintragen.
-    password: password // Passwort eintragen.
-  };
-
-  try { // Netzwerkfehler abfangen.
-    const response = await fetch(apiUrl, { // Anfrage an FastAPI senden.
-      method: 'POST', // POST-Anfrage verwenden.
-      headers: { 'Content-Type': 'application/json' }, // JSON ankündigen.
-      body: JSON.stringify(requestData) // Daten in JSON umwandeln.
-    });
-
-    const result = await response.json(); // Serverantwort lesen.
-    let message = result.error; // Fehlermeldung vorbereiten.
-    if (response.ok) { // Erfolgreiche Antwort pruefen.
-      message = result.message; // Erfolgsmeldung verwenden.
-    }
-    if (!message) { // Fehlende Meldung pruefen.
-      message = 'Unbekannter Fehler.'; // Ersatzmeldung setzen.
-    }
-
-    if (response.ok) { // Erfolg erkennen.
-      showStatus(message, 'ok'); // Erfolg anzeigen.
+  try {
+    const result = await sendToServer('/api/login', email, password);
+    if (result.ok) {
+      window.location.href = '/welcome';
     } else {
-      showStatus(message, 'error'); // Fehler anzeigen.
+      showMessage(result.error, true);
     }
-
-    if (response.ok && form.id === 'login') { // Erfolgreichen Login erkennen.
-      window.location.href = '/welcome'; // Zur Willkommensseite wechseln.
-    }
-  } catch (error) { // Serverfehler auffangen.
-    showStatus('Der Server ist nicht erreichbar.', 'error'); // Serverfehler anzeigen.
+  } catch (e) {
+    showMessage('Der Server ist nicht erreichbar.', true);
   }
 }
 
-const forms = document.querySelectorAll('form'); // Alle Formulare holen.
-for (const form of forms) { // Jedes Formular durchlaufen.
-  form.addEventListener('submit', handleFormSubmit); // Submit-Funktion verbinden.
+
+async function onRegister(event) {
+  event.preventDefault();  // Seite nicht neu laden
+
+  const email = registerForm.email.value;
+  const password = registerForm.password.value;
+
+  const error = checkInput(email, password, true);
+  if (error !== '') {
+    showMessage(error, true);
+    return;
+  }
+
+  try {
+    const result = await sendToServer('/api/register', email, password);
+    if (result.ok) {
+      showMessage(result.message, false);
+    } else {
+      showMessage(result.error, true);
+    }
+  } catch (e) {
+    showMessage('Der Server ist nicht erreichbar.', true);
+  }
 }
+
+
+loginForm.addEventListener('submit', onLogin);
+registerForm.addEventListener('submit', onRegister);
