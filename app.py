@@ -127,7 +127,7 @@ def send_otp_email(to_email: str, otp_code: str, purpose: str = "2fa"):         
     <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
       <h2 style="color: #333;">{title}</h2>
       <p>Gib den folgenden 6-stelligen Code ein:</p>
-      <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #2563eb; background: #f0f4ff; padding: 15px; text-align: center; border-radius: 6px; margin: 20px 0;">
+      <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #111827; background: #f3f4f6; padding: 15px; text-align: center; border-radius: 6px; margin: 20px 0;">
         {otp_code}
       </div>
       <p style="color: #666; font-size: 14px;">Dieser Code ist 10 Minuten lang gültig.</p>
