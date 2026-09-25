@@ -1,0 +1,9 @@
+body { max-width: 500px; margin: 40px auto; padding: 0 20px; font: 16px Arial, sans-serif; color: #222; }
+h1 { margin-bottom: 8px; }
+h2 { margin-top: 32px; font-size: 20px; }
+form { display: grid; gap: 8px; margin-bottom: 20px; }
+input, button { padding: 10px; font-size: 16px; }
+button { cursor: pointer; }
+#status { min-height: 24px; font-weight: bold; }
+.ok { color: green; }
+.error { color: darkred; }

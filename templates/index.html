@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <h1>Login</h1>
+
+    <h2>Anmelden</h2>
+    <form id="login" novalidate>
+      <input name="email" type="email" placeholder="E-Mail">
+      <input name="password" type="password" placeholder="Passwort">
+      <button>Anmelden</button>
+    </form>
+
+    <h2>Registrieren</h2>
+    <form id="register" novalidate>
+      <input name="email" type="email" placeholder="E-Mail">
+      <input name="password" type="password" placeholder="Passwort">
+      <button>Registrieren</button>
+    </form>
+
+    <p id="status" role="alert"></p>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

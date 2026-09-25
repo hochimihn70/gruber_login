@@ -1,0 +1,30 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: authdb
+      MYSQL_USER: authuser
+      MYSQL_PASSWORD: authpassword
+      MYSQL_ROOT_PASSWORD: rootpassword
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -prootpassword --protocol=tcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build: .
+    environment:
+      DATABASE_URL: mysql+pymysql://authuser:authpassword@db:3306/authdb
+    ports:
+      - "5000:5000"
+    restart: on-failure
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
