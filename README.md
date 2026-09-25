@@ -18,9 +18,16 @@
 
 Danach ist die Anwendung sicher über HTTPS unter https://logintest.smoothingo.com erreichbar (lokal weiterhin unter http://localhost:5000).
 
+## 2-Faktor-Authentifizierung (2FA) & Session-Schutz
+
+- **Routenschutz:** Die Willkommensseite `/welcome` ist geschützt. Wer ohne gültige Session darauf zugreift, wird automatisch auf `/` (Login) weitergeleitet.
+- **2FA-Ablauf:** Nach Eingabe von E-Mail und Passwort wird ein 6-stelliger Code generiert (10 Minuten gültig). Nach Eingabe des Codes wird eine sichere 7-tägige Session als HttpOnly-Cookie gesetzt.
+- **E-Mail-Zustellung:** Über Standard-SMTP in der `.env`.
+  - **Kostenlose Empfehlung:** [Resend](https://resend.com) (3.000 Mails/Monat gratis, einfache DNS-Einbindung in Cloudflare).
+  - **Dev-Modus:** Solange keine SMTP-Daten eingetragen sind, wird der Verifizierungscode direkt in den Logs ausgegeben (`docker logs gruber_login-web-1`).
+
 ## Architektur
 
-- MySQL speichert E-Mail, Passwort und Login-Zeitstempel.
-- Das Passwort wird mit bcrypt als Hash gespeichert und kann nicht zurueckgerechnet werden.
-- Cloudflared stellt eine sichere Verbindung über den Cloudflare Tunnel her (keine offenen Ports im Router/Proxmox nötig).
-- Der Login ist jederzeit moeglich.
+- MySQL speichert Benutzer, Sessions und temporäre 2FA-Codes.
+- Das Passwort wird mit bcrypt als Hash gespeichert und kann nicht zurückgerechnet werden.
+- Cloudflared stellt eine sichere Verbindung über den Cloudflare Tunnel her (keine offenen Ports nötig).

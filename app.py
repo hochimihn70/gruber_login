@@ -1,11 +1,15 @@
-import os                                                                                      # Zugriff auf Umgebungsvariablen (DATABASE_URL)
-from datetime import datetime                                                                  # Fuer Datum und Uhrzeit
+import os                                                                                      # Zugriff auf Umgebungsvariablen (DATABASE_URL, SMTP_*)
+import secrets                                                                                 # Fuer kryptografisch sichere Tokens und Codes
+import smtplib                                                                                 # Fuer den E-Mail-Versand ueber SMTP
+from datetime import datetime, timedelta                                                       # Fuer Ablaufzeiten und Datum
+from email.mime.multipart import MIMEMultipart                                                 # Fuer E-Mails mit HTML und Text
+from email.mime.text import MIMEText                                                           # Fuer E-Mail-Inhalte
 
 import bcrypt                                                                                  # Zum Hashen und Pruefen von Passwoertern
 from fastapi import FastAPI, Request                                                           # FastAPI-App und die eingehende Anfrage
-from fastapi.responses import FileResponse, JSONResponse                                       # Antworten: Datei oder JSON
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse                     # Antworten: Datei, JSON oder Weiterleitung
 from fastapi.staticfiles import StaticFiles                                                    # Liefert CSS- und JS-Dateien aus
-from sqlalchemy import DateTime, String, create_engine                                         # Spaltentypen und Datenbank-Verbindung
+from sqlalchemy import DateTime, Integer, String, create_engine                                 # Spaltentypen und Datenbank-Verbindung
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column                     # Werkzeuge fuer Tabellen-Klassen
 
 
@@ -28,74 +32,234 @@ class User(Base):                                                               
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)            # Letzter Login, leer wenn noch nie
 
 
-Base.metadata.create_all(engine)                                                               # Tabelle anlegen, falls sie noch nicht existiert
+class SessionToken(Base):                                                                      # Speichert gueltige Login-Sitzungen
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)                    # 64-Zeichen Zufallsschluessel
+    user_id: Mapped[int] = mapped_column(Integer)                                              # Benutzer-ID
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)                                     # Ablaufdatum der Session (z.B. 7 Tage)
 
 
-@app.get("/")                                                                                  # Wenn jemand die Startseite aufruft
-def show_login_page():                                                                         # Funktion fuer die Login-Seite
-    return FileResponse("templates/index.html")                                                # Die HTML-Datei zurueckschicken
+class EmailOTP(Base):                                                                          # Speichert temporaere 2FA-Einmalcodes
+    __tablename__ = "email_otps"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)                                # E-Mail-Adresse
+    code: Mapped[str] = mapped_column(String(6))                                                # 6-stelliger Zahlencode
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)                                     # Ablaufzeitpunkt (10 Minuten)
 
 
-@app.get("/welcome")                                                                           # Wenn jemand /welcome aufruft
-def show_welcome_page():                                                                       # Funktion fuer die Willkommensseite
-    return FileResponse("templates/welcome.html")                                              # Die HTML-Datei zurueckschicken
+Base.metadata.create_all(engine)                                                               # Tabellen anlegen, falls sie noch nicht existieren
 
 
-@app.post("/api/register")                                                                     # Das Registrieren-Formular schickt hierher
-async def register(request: Request):                                                          # Funktion fuers Registrieren
-    data = await request.json()                                                                # Die JSON-Daten vom Browser lesen
-    email = data["email"].strip().lower()                                                      # E-Mail ohne Leerzeichen und in Kleinbuchstaben
-    password = data["password"]                                                                # Das eingegebene Passwort
+def send_otp_email(to_email: str, otp_code: str):                                              # Versendet den 2FA-Code per E-Mail
+    smtp_host = os.environ.get("SMTP_HOST", "").strip()
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER", "").strip()
+    smtp_password = os.environ.get("SMTP_PASSWORD", "").strip()
+    smtp_from = os.environ.get("SMTP_FROM", smtp_user or "noreply@smoothingo.com").strip()
 
-    if email == "" or password == "":                                                          # Wenn etwas fehlt
-        return JSONResponse({"error": "E-Mail und Passwort fehlen."}, status_code=400)         # Fehler zurueckschicken
+    if not smtp_host:                                                                          # Fallback fuer Entwicklung: Code in den Logs ausgeben
+        print(f"\n=======================================================", flush=True)
+        print(f"[2FA-DEV-MODE] Verifizierungscode für {to_email}: >>> {otp_code} <<<", flush=True)
+        print(f"=======================================================\n", flush=True)
+        return
 
-    session = Session(engine)                                                                  # Verbindung zur Datenbank oeffnen
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"Dein Verifizierungscode: {otp_code}"
+    msg["From"] = smtp_from
+    msg["To"] = to_email
 
-    existing_user = session.query(User).filter_by(email=email).first()                         # Gibt es diese E-Mail schon?
-    if existing_user is not None:                                                              # Wenn ja
-        session.close()                                                                        # Verbindung schliessen
-        return JSONResponse({"error": "E-Mail ist bereits registriert."}, status_code=409)     # Fehler zurueckschicken
+    text_content = f"Hallo!\n\nDein Bestätigungscode lautet: {otp_code}\nDer Code ist 10 Minuten gültig.\n"
+    html_content = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+      <h2 style="color: #333;">Zwei-Faktor-Verifizierung</h2>
+      <p>Gib den folgenden 6-stelligen Code ein, um deinen Login abzuschließen:</p>
+      <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #2563eb; background: #f0f4ff; padding: 15px; text-align: center; border-radius: 6px; margin: 20px 0;">
+        {otp_code}
+      </div>
+      <p style="color: #666; font-size: 14px;">Dieser Code ist 10 Minuten lang gültig.</p>
+    </div>
+    """
+    msg.attach(MIMEText(text_content, "plain"))
+    msg.attach(MIMEText(html_content, "html"))
 
-    password_bytes = password.encode()                                                         # Passwort in Bytes umwandeln, bcrypt braucht Bytes
-    salt = bcrypt.gensalt()                                                                    # Zufaelliges Salt erzeugen, damit gleiche Passwoerter verschiedene Hashes haben
-    password_hash = bcrypt.hashpw(password_bytes, salt).decode()                               # Hash berechnen und wieder in Text umwandeln
-
-    new_user = User()                                                                          # Neuen leeren Benutzer erstellen
-    new_user.email = email                                                                     # E-Mail eintragen
-    new_user.password = password_hash                                                          # Den Hash eintragen, nicht das Passwort
-    new_user.created_at = datetime.now()                                                       # Aktuelle Zeit als Registrierungszeit
-
-    session.add(new_user)                                                                      # Benutzer zum Speichern vormerken
-    session.commit()                                                                           # Wirklich in MySQL speichern
-    session.close()                                                                            # Verbindung schliessen
-
-    return JSONResponse({"message": "Registrierung erfolgreich."}, status_code=201)            # Erfolg zurueckschicken
+    if smtp_port == 465:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.sendmail(smtp_from, [to_email], msg.as_string())
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.sendmail(smtp_from, [to_email], msg.as_string())
 
 
-@app.post("/api/login")                                                                        # Das Login-Formular schickt hierher
-async def login(request: Request):                                                             # Funktion fuers Einloggen
-    data = await request.json()                                                                # Die JSON-Daten vom Browser lesen
-    email = data["email"].strip().lower()                                                      # E-Mail ohne Leerzeichen und in Kleinbuchstaben
-    password = data["password"]                                                                # Das eingegebene Passwort
+@app.get("/")                                                                                  # Startseite mit Login- und Registrierungsformular
+def show_login_page():
+    return FileResponse("templates/index.html")
 
-    session = Session(engine)                                                                  # Verbindung zur Datenbank oeffnen
 
-    user = session.query(User).filter_by(email=email).first()                                  # Benutzer mit dieser E-Mail suchen
-    if user is None:                                                                           # Wenn es ihn nicht gibt
-        session.close()                                                                        # Verbindung schliessen
-        return JSONResponse({"error": "E-Mail oder Passwort ist falsch."}, status_code=401)    # Fehler zurueckschicken
+@app.get("/welcome")                                                                           # Geschuetzte Willkommensseite
+def show_welcome_page(request: Request):
+    token = request.cookies.get("session_token")                                               # Cookie auslesen
+    if not token:                                                                              # Wenn kein Cookie existiert -> sofort zum Login
+        return RedirectResponse(url="/", status_code=303)
 
-    password_bytes = password.encode()                                                         # Eingegebenes Passwort in Bytes umwandeln
-    saved_hash_bytes = user.password.encode()                                                  # Gespeicherten Hash in Bytes umwandeln
-    password_is_correct = bcrypt.checkpw(password_bytes, saved_hash_bytes)                     # bcrypt vergleicht Passwort mit Hash
+    session = Session(engine)
+    now = datetime.now()
+    valid_session = session.query(SessionToken).filter(                                        # Pruefen, ob die Session gueltig ist
+        SessionToken.token == token,
+        SessionToken.expires_at > now
+    ).first()
+    session.close()
 
-    if password_is_correct == False:                                                           # Wenn das Passwort falsch ist
-        session.close()                                                                        # Verbindung schliessen
-        return JSONResponse({"error": "E-Mail oder Passwort ist falsch."}, status_code=401)    # Fehler zurueckschicken
+    if not valid_session:                                                                      # Ungueltig oder abgelaufen
+        response = RedirectResponse(url="/", status_code=303)
+        response.delete_cookie("session_token")
+        return response
 
-    user.last_login_at = datetime.now()                                                        # Zeit des Logins eintragen
-    session.commit()                                                                           # Aenderung in MySQL speichern
-    session.close()                                                                            # Verbindung schliessen
+    return FileResponse("templates/welcome.html")                                              # Zugriff erlaubt!
 
-    return JSONResponse({"message": "Login erfolgreich."}, status_code=200)                    # Erfolg zurueckschicken
+
+@app.post("/api/register")                                                                     # Registrieren
+async def register(request: Request):
+    data = await request.json()
+    email = data["email"].strip().lower()
+    password = data["password"]
+
+    if email == "" or password == "":
+        return JSONResponse({"error": "E-Mail und Passwort fehlen."}, status_code=400)
+
+    session = Session(engine)
+    existing_user = session.query(User).filter_by(email=email).first()
+    if existing_user is not None:
+        session.close()
+        return JSONResponse({"error": "E-Mail ist bereits registriert."}, status_code=409)
+
+    password_bytes = password.encode()
+    salt = bcrypt.gensalt()
+    password_hash = bcrypt.hashpw(password_bytes, salt).decode()
+
+    new_user = User()
+    new_user.email = email
+    new_user.password = password_hash
+    new_user.created_at = datetime.now()
+
+    session.add(new_user)
+    session.commit()
+    session.close()
+
+    return JSONResponse({"message": "Registrierung erfolgreich. Du kannst dich jetzt einloggen."}, status_code=201)
+
+
+@app.post("/api/login")                                                                        # Schritt 1 des Logins: Passwort pruefen & 2FA-Code senden
+async def login(request: Request):
+    data = await request.json()
+    email = data["email"].strip().lower()
+    password = data["password"]
+
+    session = Session(engine)
+    user = session.query(User).filter_by(email=email).first()
+    if user is None:
+        session.close()
+        return JSONResponse({"error": "E-Mail oder Passwort ist falsch."}, status_code=401)
+
+    password_bytes = password.encode()
+    saved_hash_bytes = user.password.encode()
+    password_is_correct = bcrypt.checkpw(password_bytes, saved_hash_bytes)
+
+    if password_is_correct == False:
+        session.close()
+        return JSONResponse({"error": "E-Mail oder Passwort ist falsch."}, status_code=401)
+
+    # Passwort ist korrekt -> 6-stelligen OTP erzeugen und speichern
+    otp_code = f"{secrets.randbelow(900000) + 100000}"
+    expires_at = datetime.now() + timedelta(minutes=10)
+
+    session.query(EmailOTP).filter_by(email=email).delete()                                     # Alte Codes loeschen
+    new_otp = EmailOTP(email=email, code=otp_code, created_at=datetime.now(), expires_at=expires_at)
+    session.add(new_otp)
+    session.commit()
+    session.close()
+
+    try:
+        send_otp_email(email, otp_code)
+    except Exception as e:
+        print(f"Fehler beim Mailversand: {e}", flush=True)
+        return JSONResponse({"error": "E-Mail-Zustellung fehlgeschlagen. Bitte versuche es später."}, status_code=500)
+
+    return JSONResponse({
+        "status": "2fa_required",
+        "email": email,
+        "message": f"Bestätigungscode an {email} gesendet."
+    }, status_code=200)
+
+
+@app.post("/api/verify-2fa")                                                                   # Schritt 2 des Logins: 2FA-Code pruefen & Session erstellen
+async def verify_2fa(request: Request):
+    data = await request.json()
+    email = data.get("email", "").strip().lower()
+    code = data.get("code", "").strip()
+
+    if email == "" or code == "":
+        return JSONResponse({"error": "E-Mail und Code erforderlich."}, status_code=400)
+
+    session = Session(engine)
+    now = datetime.now()
+    otp_entry = session.query(EmailOTP).filter(
+        EmailOTP.email == email,
+        EmailOTP.code == code,
+        EmailOTP.expires_at > now
+    ).first()
+
+    if not otp_entry:
+        session.close()
+        return JSONResponse({"error": "Ungültiger oder abgelaufener Bestätigungscode."}, status_code=400)
+
+    # Code ist gueltig -> OTP loeschen
+    session.query(EmailOTP).filter_by(email=email).delete()
+
+    user = session.query(User).filter_by(email=email).first()
+    user_id = user.id if user else 0
+    if user:
+        user.last_login_at = now
+
+    # Neue sichere Session anlegen (7 Tage gueltig)
+    token = secrets.token_hex(32)
+    session_expires = now + timedelta(days=7)
+    new_session = SessionToken(token=token, user_id=user_id, created_at=now, expires_at=session_expires)
+    session.add(new_session)
+    session.commit()
+    session.close()
+
+    # Antwort mit HttpOnly-Cookie zurueckgeben
+    response = JSONResponse({"message": "Login erfolgreich.", "redirect": "/welcome"}, status_code=200)
+    response.set_cookie(
+        key="session_token",
+        value=token,
+        max_age=7 * 24 * 3600,
+        httponly=True,
+        samesite="lax",
+        secure=False
+    )
+    return response
+
+
+@app.post("/api/logout")                                                                       # Logout: Session ungueltig machen
+async def logout(request: Request):
+    token = request.cookies.get("session_token")
+    if token:
+        session = Session(engine)
+        session.query(SessionToken).filter_by(token=token).delete()
+        session.commit()
+        session.close()
+
+    response = JSONResponse({"message": "Abmeldung erfolgreich.", "redirect": "/"}, status_code=200)
+    response.delete_cookie("session_token")
+    return response

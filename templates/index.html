@@ -10,19 +10,31 @@
   <main>
     <h1>Login</h1>
 
-    <h2>Anmelden</h2>
-    <form id="login" novalidate>
-      <input name="email" type="email" placeholder="E-Mail">
-      <input name="password" type="password" placeholder="Passwort">
-      <button>Anmelden</button>
-    </form>
+    <div id="auth-forms">
+      <h2>Anmelden</h2>
+      <form id="login" novalidate>
+        <input name="email" type="email" placeholder="E-Mail" required>
+        <input name="password" type="password" placeholder="Passwort" required>
+        <button type="submit">Anmelden</button>
+      </form>
 
-    <h2>Registrieren</h2>
-    <form id="register" novalidate>
-      <input name="email" type="email" placeholder="E-Mail">
-      <input name="password" type="password" placeholder="Passwort">
-      <button>Registrieren</button>
-    </form>
+      <h2>Registrieren</h2>
+      <form id="register" novalidate>
+        <input name="email" type="email" placeholder="E-Mail" required>
+        <input name="password" type="password" placeholder="Passwort (min. 8 Zeichen)" required>
+        <button type="submit">Registrieren</button>
+      </form>
+    </div>
+
+    <div id="two-factor-section" style="display: none;">
+      <h2>Zwei-Faktor-Bestätigung</h2>
+      <p id="two-factor-info">Bitte gib den 6-stelligen Code ein, den wir dir per E-Mail gesendet haben.</p>
+      <form id="two-factor-form" novalidate>
+        <input name="code" type="text" maxlength="6" pattern="[0-9]{6}" placeholder="6-stelliger Code" autocomplete="one-time-code" required>
+        <button type="submit">Code bestätigen</button>
+        <button type="button" id="cancel-2fa" class="secondary">Zurück zum Login</button>
+      </form>
+    </div>
 
     <p id="status" role="alert"></p>
   </main>

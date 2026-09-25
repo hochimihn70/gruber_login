@@ -19,6 +19,11 @@ services:
     build: .
     environment:
       DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://authuser:authpassword@db:3306/authdb}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     ports:
       - "5000:5000"
     restart: on-failure

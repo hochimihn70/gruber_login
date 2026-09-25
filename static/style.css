@@ -2,8 +2,11 @@ body { max-width: 500px; margin: 40px auto; padding: 0 20px; font: 16px Arial, s
 h1 { margin-bottom: 8px; }
 h2 { margin-top: 32px; font-size: 20px; }
 form { display: grid; gap: 8px; margin-bottom: 20px; }
-input, button { padding: 10px; font-size: 16px; }
-button { cursor: pointer; }
+input, button { padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+button { cursor: pointer; background: #2563eb; color: #fff; border: none; font-weight: bold; }
+button:hover { background: #1d4ed8; }
+button.secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; font-weight: normal; }
+button.secondary:hover { background: #e5e7eb; }
 #status { min-height: 24px; font-weight: bold; }
 .ok { color: green; }
 .error { color: darkred; }

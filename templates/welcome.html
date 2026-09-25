@@ -10,7 +10,16 @@
   <main>
     <h1>Willkommen!</h1>
     <p>Du bist erfolgreich eingeloggt.</p>
-    <a href="/">Zurück zum Login</a>
+    <button id="logout-btn" type="button">Abmelden</button>
   </main>
+  <script>
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+      try {
+        await fetch('/api/logout', { method: 'POST' });
+      } finally {
+        window.location.href = '/';
+      }
+    });
+  </script>
 </body>
 </html>
