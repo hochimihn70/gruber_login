@@ -111,10 +111,11 @@ def send_otp_email(to_email: str, otp_code: str, purpose: str = "2fa"):         
 
     title = "Dein Verifizierungscode" if purpose == "2fa" else "Passwort zurücksetzen"
 
-    if not smtp_host:                                                                          # Fallback fuer Entwicklung ohne SMTP
-        print(f"\n=======================================================", flush=True)
-        print(f"[{title.upper()}] für {to_email}: >>> {otp_code} <<<", flush=True)
-        print(f"=======================================================\n", flush=True)
+    print(f"\n=======================================================", flush=True)
+    print(f"[{title.upper()}] für {to_email}: >>> {otp_code} <<<", flush=True)
+    print(f"=======================================================\n", flush=True)
+
+    if not smtp_host:                                                                          # Wenn kein SMTP eingetragen ist, fertig
         return
 
     msg = MIMEMultipart("alternative")
@@ -218,9 +219,6 @@ async def register(request: Request):
 
     session = Session(engine)
     existing_user = session.query(User).filter_by(email=email).first()
-    if existing_user is not None:
-        session.close()
-        return JSONResponse({"error": "E-Mail ist bereits registriert."}, status_code=409)
 
     salt = bcrypt.gensalt()
     server_hash = bcrypt.hashpw(password_hash.encode(), salt).decode()
@@ -230,6 +228,25 @@ async def register(request: Request):
     if auth_method == "totp":
         totp_secret = pyotp.random_base32()
         qr_svg = generate_totp_qr_svg(email, totp_secret)
+
+    if existing_user is not None:
+        # Falls das Konto bereits existiert: Passwort & Sicherheitsmethode aktualisieren
+        existing_user.password = server_hash
+        existing_user.auth_method = auth_method
+        existing_user.totp_secret = totp_secret
+        session.commit()
+        session.close()
+
+        method_name = "1. Nur Passwort"
+        if auth_method == "email_otp": method_name = "2. E-Mail-Code (2FA)"
+        if auth_method == "totp": method_name = "3. Authenticator-App (TOTP)"
+
+        return JSONResponse({
+            "message": f"Konto aktualisiert! Methode ist jetzt: {method_name}.",
+            "auth_method": auth_method,
+            "totp_secret": totp_secret,
+            "qr_svg": qr_svg
+        }, status_code=200)
 
     new_user = User(
         email=email,
