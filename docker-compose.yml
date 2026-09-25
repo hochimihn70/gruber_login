@@ -18,13 +18,22 @@ services:
   web:
     build: .
     environment:
-      DATABASE_URL: mysql+pymysql://authuser:authpassword@db:3306/authdb
+      DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://authuser:authpassword@db:3306/authdb}
     ports:
       - "5000:5000"
     restart: on-failure
     depends_on:
       db:
         condition: service_healthy
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate run
+    depends_on:
+      - web
 
 volumes:
   mysql_data:
