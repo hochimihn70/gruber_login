@@ -3,16 +3,48 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Willkommen</title>
+  <title>Willkommen - Geschützter Bereich</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <main>
     <h1>Willkommen!</h1>
-    <p>Du bist erfolgreich eingeloggt.</p>
+    <p>Du bist erfolgreich authentifiziert und eingeloggt.</p>
+
+    <div class="user-card">
+      <h2>Sitzungsdetails</h2>
+      <p><strong>E-Mail:</strong> <span id="user-email">Lade...</span></p>
+      <p><strong>Sicherheitsmethode:</strong> <span id="user-method">Lade...</span></p>
+      <p><strong>Letzter Login (Timestamp):</strong> <span id="user-last-login">Lade...</span></p>
+      <p><strong>Konto erstellt am:</strong> <span id="user-created">Lade...</span></p>
+    </div>
+
     <button id="logout-btn" type="button">Abmelden</button>
   </main>
+
   <script>
+    async function loadUserData() {
+      try {
+        const response = await fetch('/api/me');
+        if (!response.ok) {
+          window.location.href = '/';
+          return;
+        }
+        const data = await response.json();
+        document.getElementById('user-email').textContent = data.email;
+        
+        let methodText = '1. Nur Passwort';
+        if (data.auth_method === 'email_otp') methodText = '2. Passwort + E-Mail-Code (2FA)';
+        if (data.auth_method === 'totp') methodText = '3. Passwort + Authenticator-App (TOTP)';
+        document.getElementById('user-method').textContent = methodText;
+
+        document.getElementById('user-last-login').textContent = data.last_login_at;
+        document.getElementById('user-created').textContent = data.created_at;
+      } catch (e) {
+        window.location.href = '/';
+      }
+    }
+
     document.getElementById('logout-btn').addEventListener('click', async () => {
       try {
         await fetch('/api/logout', { method: 'POST' });
@@ -20,6 +52,8 @@
         window.location.href = '/';
       }
     });
+
+    loadUserData();
   </script>
 </body>
 </html>
