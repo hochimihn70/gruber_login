@@ -179,14 +179,23 @@ async function onRegister(event) {
 
     registerForm.reset();
 
-    // Bei TOTP: QR-Code anzeigen zum Scannen
-    if (auth_method === 'totp' && result.qr_svg) {
+    // Direkt in den Ablauf weiterleiten (kein toter Klick!):
+    if (result.status === 'success') {
+      window.location.href = result.redirect || '/welcome';
+    } else if (result.status === '2fa_required') {
+      pendingEmail = email;
+      showView('two-factor');
+      twoFactorInfo.textContent = `Ein 6-stelliger Bestätigungscode wurde an ${email} gesendet.`;
+      twoFactorForm.code.value = '';
+      twoFactorForm.code.focus();
+      showMessage(result.message || 'Code an deine E-Mail gesendet!', false);
+    } else if (result.status === 'totp_setup') {
       totpQrContainer.innerHTML = result.qr_svg;
       totpSecretKey.textContent = result.totp_secret;
       showView('totp-setup');
       showMessage('Registrierung erfolgreich! Bitte richte deine Authenticator-App ein.', false);
     } else {
-      showMessage(result.message || 'Registrierung erfolgreich! Du kannst dich jetzt anmelden.', false);
+      showMessage(result.message || 'Erfolgreich!', false);
       showView('main');
     }
   } catch (e) {

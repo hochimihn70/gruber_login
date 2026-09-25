@@ -229,42 +229,69 @@ async def register(request: Request):
         totp_secret = pyotp.random_base32()
         qr_svg = generate_totp_qr_svg(email, totp_secret)
 
+    now = datetime.now()
     if existing_user is not None:
-        # Falls das Konto bereits existiert: Passwort & Sicherheitsmethode aktualisieren
         existing_user.password = server_hash
         existing_user.auth_method = auth_method
         existing_user.totp_secret = totp_secret
+        user = existing_user
+    else:
+        user = User(
+            email=email,
+            password=server_hash,
+            auth_method=auth_method,
+            totp_secret=totp_secret,
+            created_at=now
+        )
+        session.add(user)
+
+    session.commit()
+
+    # Sofort in den entsprechenden Ablauf uebergehen (kein toter Klick mehr!):
+    # Fall 1: Nur Passwort -> Direkt einloggen und zu /welcome
+    if auth_method == "password":
+        user.last_login_at = now
+        token = secrets.token_hex(32)
+        session_token = SessionToken(token=token, user_id=user.id, created_at=now, expires_at=now + timedelta(days=7))
+        session.add(session_token)
         session.commit()
         session.close()
 
-        method_name = "1. Nur Passwort"
-        if auth_method == "email_otp": method_name = "2. E-Mail-Code (2FA)"
-        if auth_method == "totp": method_name = "3. Authenticator-App (TOTP)"
+        response = JSONResponse({"status": "success", "redirect": "/welcome"}, status_code=200)
+        response.set_cookie(key="session_token", value=token, max_age=7*24*3600, httponly=True, samesite="lax", secure=False)
+        return response
+
+    # Fall 2: E-Mail-Code (2FA) -> Direkt Code versenden und 2FA-Maske oeffnen
+    elif auth_method == "email_otp":
+        otp_code = f"{secrets.randbelow(900000) + 100000}"
+        expires_at = now + timedelta(minutes=10)
+        session.query(EmailOTP).filter_by(email=email, purpose="2fa").delete()
+        new_otp = EmailOTP(email=email, code=otp_code, purpose="2fa", created_at=now, expires_at=expires_at)
+        session.add(new_otp)
+        session.commit()
+        session.close()
+
+        try:
+            send_otp_email(email, otp_code, "2fa")
+        except Exception as e:
+            print(f"Mail-Fehler: {e}", flush=True)
 
         return JSONResponse({
-            "message": f"Konto aktualisiert! Methode ist jetzt: {method_name}.",
+            "status": "2fa_required",
+            "method": "email_otp",
+            "email": email,
+            "message": f"Bestätigungscode wurde an {email} gesendet!"
+        }, status_code=200)
+
+    # Fall 3: Authenticator-App -> Direkt QR-Code anzeigen
+    elif auth_method == "totp":
+        session.close()
+        return JSONResponse({
+            "status": "totp_setup",
             "auth_method": auth_method,
             "totp_secret": totp_secret,
             "qr_svg": qr_svg
         }, status_code=200)
-
-    new_user = User(
-        email=email,
-        password=server_hash,
-        auth_method=auth_method,
-        totp_secret=totp_secret,
-        created_at=datetime.now()
-    )
-    session.add(new_user)
-    session.commit()
-    session.close()
-
-    return JSONResponse({
-        "message": "Registrierung erfolgreich!",
-        "auth_method": auth_method,
-        "totp_secret": totp_secret,
-        "qr_svg": qr_svg
-    }, status_code=201)
 
 
 @app.post("/api/login")                                                                        # Login (Schritt 1)
