@@ -188,9 +188,9 @@ nachher:  unbekannte E-Mail  → 212 ms     bekannte E-Mail  →  212 ms   (0 % 
 
 So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 
-### 5. Weitere Schutzmassnahmen
+### 5. Weitere Schutzmaßnahmen
 
-| Massnahme | Umsetzung |
+| Maßnahme | Umsetzung |
 |---|---|
 | Session-Token in der DB | nur als SHA-256-Hash – ein DB-Leak reicht nicht, um die Session zu übernehmen |
 | E-Mail-Prüfung | auch serverseitig (nicht nur im Browser) |

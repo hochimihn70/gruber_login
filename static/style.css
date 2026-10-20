@@ -99,7 +99,7 @@ button { font-family: inherit; cursor: pointer; }
 .btn-row .btn-primary { margin-top: 0; flex: 1; }
 .btn-row .btn-secondary { margin-top: 0; }
 
-/* Kleiner, unauffaelliger Button fuer "Konto erstellen" */
+/* Kleiner, unauffälliger Button für "Konto erstellen" */
 #btn-show-register {
   margin-top: 0;
   padding: 9px 16px;

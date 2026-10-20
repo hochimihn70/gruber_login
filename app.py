@@ -35,8 +35,8 @@ async def security_headers(request: Request, call_next):
 
     Hinweis zu Cloudflare: Der Tunnel injiziert ein eigenes kleines Script in die
     HTML-Ausgabe (Bot-Erkennung, /cdn-cgi/challenge-platform/). Die strikte CSP
-    blockiert es - die App selbst laeuft davon nicht betroffen. Sollte es doch
-    noetig werden, "script-src 'self' 'unsafe-inline'" verwenden.
+    blockiert es - die App selbst läuft davon nicht betroffen. Sollte es doch
+    nötig werden, "script-src 'self' 'unsafe-inline'" verwenden.
     """
     response = await call_next(request)
     response.headers["X-Frame-Options"] = "DENY"
@@ -127,22 +127,22 @@ def session_cookie_secure() -> bool:                                            
     return os.environ.get("SESSION_COOKIE_SECURE", "true").strip().lower() in ("true", "1", "yes", "on")
 
 
-EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")                                      # Einfache E-Mail-Pruefung
-MAX_OTP_ATTEMPTS = 5                                                                            # Max. Fehlversuche fuer einen 2FA-Code
-DUMMY_HASH = bcrypt.hashpw(b"dummy-password-for-timing", bcrypt.gensalt())                       # Dummy-Hash fuer gleiche Antwortzeiten
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")                                      # Einfache E-Mail-Prüfung
+MAX_OTP_ATTEMPTS = 5                                                                            # Max. Fehlversuche für einen 2FA-Code
+DUMMY_HASH = bcrypt.hashpw(b"dummy-password-for-timing", bcrypt.gensalt())                       # Dummy-Hash für gleiche Antwortzeiten
 
 
-def is_valid_email(email: str) -> bool:                                                         # E-Mail-Format pruefen
-    """Prueft das Format der E-Mail - auch serverseitig, nicht nur im Browser."""
+def is_valid_email(email: str) -> bool:                                                         # E-Mail-Format prüfen
+    """Prüft das Format der E-Mail - auch serverseitig, nicht nur im Browser."""
     return bool(EMAIL_PATTERN.match(email))
 
 
-def hash_token(token: str) -> str:                                                              # Session-Token fuer die DB hashen
+def hash_token(token: str) -> str:                                                              # Session-Token für die DB hashen
     """In der Datenbank steht NICHT das Token selbst, sondern nur sein SHA-256-Hash.
 
     Warum das sicher ist: Das Token hat 256 Bit Zufall - ein SHA-256-Hash davon kann
-    nicht zurueckgerechnet werden. Ein DB-Leak reicht damit nicht mehr, um die
-    Session zu uebernehmen, weil der Angreifer den echten Cookie-Wert nicht kennt.
+    nicht zurückgerechnet werden. Ein DB-Leak reicht damit nicht mehr, um die
+    Session zu übernehmen, weil der Angreifer den echten Cookie-Wert nicht kennt.
     """
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -493,7 +493,7 @@ async def login(request: Request):
     password_hash = data.get("password_hash", "")
 
     if not is_valid_email(email):
-        # Kein eigener Fehlertext, sonst koennte man die Formateingabe umgehen und
+        # Kein eigener Fehlertext, sonst könnte man die Formateingabe umgehen und
         # zwischen "E-Mail kaputt" und "E-Mail unbekannt" unterscheiden.
         bcrypt.checkpw(password_hash.encode(), DUMMY_HASH)      # Antwortzeit angleichen
         return JSONResponse({"error": "E-Mail oder Passwort ist falsch."}, status_code=401)
@@ -501,7 +501,7 @@ async def login(request: Request):
     session = Session(engine)
     user = session.query(User).filter_by(email=email).first()
     if user is None:
-        # Auch bei unbekannter E-Mail wird ein bcrypt-Vergleich gerechnet. Sonst waere die
+        # Auch bei unbekannter E-Mail wird ein bcrypt-Vergleich gerechnet. Sonst wäre die
         # Antwortzeit ein Rauschanzeiger: 6 ms (User existiert nicht) vs. 230 ms (existiert).
         bcrypt.checkpw(password_hash.encode(), DUMMY_HASH)
         session.close()
@@ -571,7 +571,7 @@ async def verify_2fa(request: Request):
 
     if user.auth_method == "email_otp":
         # Den aktiven Code holen (nicht direkt mit dem eingegebenen Code vergleichen),
-        # damit wir die Fehlversuche zaehlen koennen.
+        # damit wir die Fehlversuche zählen können.
         otp = session.query(EmailOTP).filter(
             EmailOTP.email == email,
             EmailOTP.purpose == "2fa",
@@ -581,11 +581,11 @@ async def verify_2fa(request: Request):
             session.close()
             return JSONResponse({"error": "Ungültiger oder abgelaufener E-Mail-Code."}, status_code=400)
 
-        if not secrets.compare_digest(otp.code, code):           # falscher Code -> Versuch zaehlen
+        if not secrets.compare_digest(otp.code, code):           # falscher Code -> Versuch zählen
             otp.attempts += 1
             remaining = MAX_OTP_ATTEMPTS - otp.attempts           # Wert VOR dem Commit lesen
             if remaining <= 0:
-                # Zu viele Fehlversuche: Code verbrauchen. Ohne diese Bremse waeren
+                # Zu viele Fehlversuche: Code verbrauchen. Ohne diese Bremse wären
                 # 900.000 Kombinationen in 10 Minuten durchprobierbar.
                 session.query(EmailOTP).filter_by(email=email, purpose="2fa").delete()
                 session.commit()
@@ -685,7 +685,7 @@ async def reset_password(request: Request):
     salt = bcrypt.gensalt()
     user.password = bcrypt.hashpw(new_password_hash.encode(), salt).decode()
     session.query(EmailOTP).filter_by(email=email, purpose="reset").delete()
-    # Alle bestehenden Sessions des Users beenden. Wer das Passwort zuruecksetzt,
+    # Alle bestehenden Sessions des Users beenden. Wer das Passwort zurücksetzt,
     # will (typischerweise) auch, dass niemand sonst mit einer alten Session drin ist.
     session.query(SessionToken).filter_by(user_id=user.id).delete()
     session.commit()
