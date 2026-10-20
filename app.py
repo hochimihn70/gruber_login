@@ -92,6 +92,37 @@ def is_login_allowed_now() -> tuple[bool, str]:                                 
     return True, ""
 
 
+def session_cookie_secure() -> bool:                                                            # Session-Cookie nur ueber HTTPS senden?
+    """Standard: ja. Ueber die .env abschaltbar (SESSION_COOKIE_SECURE=false) - noetig,
+    wenn die App testweise ueber eine LAN-IP ohne HTTPS aufgerufen wird."""
+    return os.environ.get("SESSION_COOKIE_SECURE", "true").strip().lower() in ("true", "1", "yes", "on")
+
+
+def start_session(user_id: int, payload: dict) -> JSONResponse:                                 # Session anlegen + Cookie setzen
+    """Legt eine 7-Tage-Session an und haengt das Session-Cookie an die Antwort.
+
+    Diese eine Funktion ersetzt dreifach kopierten Code - das Cookie kann so nur
+    an EINER Stelle konfiguriert werden.
+    """
+    now = datetime.now()
+    token = secrets.token_hex(32)                                                               # 256 Bit Zufall aus dem kryptografischen PRNG
+    session = Session(engine)
+    session.add(SessionToken(token=token, user_id=user_id, created_at=now, expires_at=now + timedelta(days=7)))
+    session.commit()
+    session.close()
+
+    response = JSONResponse(payload, status_code=200)
+    response.set_cookie(
+        key="session_token",
+        value=token,
+        max_age=7 * 24 * 3600,                                                                   # 7 Tage
+        httponly=True,                                                                          # JavaScript kann das Cookie nicht auslesen
+        samesite="lax",                                                                         # schuetzt gegen CSRF
+        secure=session_cookie_secure(),                                                         # nur ueber HTTPS senden
+    )
+    return response
+
+
 def generate_totp_qr_svg(email: str, secret: str) -> str:                                     # Erzeugt einen SVG-QR-Code
     totp = pyotp.TOTP(secret)
     uri = totp.provisioning_uri(name=email, issuer_name="Gruber Login")
@@ -319,13 +350,30 @@ async def register(request: Request):
     session = Session(engine)
     existing_user = session.query(User).filter_by(email=email).first()
 
+    # ------------------------------------------------------------------------------------------
+    # SICHERHEITSREGEL: Ein bestehendes Konto darf NIEMALS ohne Passwort ueberschrieben werden.
+    # Sonst koennte jeder, der eine fremde E-Mail-Adresse kennt, das Konto uebernehmen.
+    # Wer die E-Mail schon hat, muss also das aktuelle Passwort eingeben - dann wird das
+    # Konto aktualisiert (z. B. um die Sicherheitsstufe zu aendern).
+    # ------------------------------------------------------------------------------------------
+    if existing_user is not None:
+        if not bcrypt.checkpw(password_hash.encode(), existing_user.password.encode()):
+            session.close()
+            return JSONResponse({
+                "error": "Diese E-Mail ist bereits registriert und das Passwort stimmt nicht überein. "
+                         "Bitte melde dich unten an oder setze dein Passwort zurück."
+            }, status_code=401)
+
     salt = bcrypt.gensalt()
     server_hash = bcrypt.hashpw(password_hash.encode(), salt).decode()
 
     totp_secret = None
     qr_svg = None
     if auth_method == "totp":
-        totp_secret = pyotp.random_base32()
+        if existing_user is not None and existing_user.auth_method == "totp" and existing_user.totp_secret:
+            totp_secret = existing_user.totp_secret            # Secret beibehalten -> vorhandene App funktioniert weiter
+        else:
+            totp_secret = pyotp.random_base32()
         qr_svg = generate_totp_qr_svg(email, totp_secret)
 
     now = datetime.now()
@@ -350,15 +398,10 @@ async def register(request: Request):
     # Fall 1: Nur Passwort -> Direkt einloggen und zu /welcome
     if auth_method == "password":
         user.last_login_at = now
-        token = secrets.token_hex(32)
-        session_token = SessionToken(token=token, user_id=user.id, created_at=now, expires_at=now + timedelta(days=7))
-        session.add(session_token)
         session.commit()
+        user_id = user.id                                         # ID vor dem Schliessen auslesen (danach ist das Objekt detached)
         session.close()
-
-        response = JSONResponse({"status": "success", "redirect": "/welcome"}, status_code=200)
-        response.set_cookie(key="session_token", value=token, max_age=7*24*3600, httponly=True, samesite="lax", secure=False)
-        return response
+        return start_session(user_id, {"status": "success", "redirect": "/welcome"})
 
     # Fall 2: E-Mail-Code (2FA) -> Direkt Code versenden und 2FA-Maske oeffnen
     elif auth_method == "email_otp":
@@ -412,15 +455,10 @@ async def login(request: Request):
     # Variante 1: Nur Passwort -> direkt anmelden
     if user.auth_method == "password":
         user.last_login_at = now
-        token = secrets.token_hex(32)
-        session_token = SessionToken(token=token, user_id=user.id, created_at=now, expires_at=now + timedelta(days=7))
-        session.add(session_token)
         session.commit()
+        user_id = user.id                                         # ID vor dem Schliessen auslesen
         session.close()
-
-        response = JSONResponse({"status": "success", "redirect": "/welcome"}, status_code=200)
-        response.set_cookie(key="session_token", value=token, max_age=7*24*3600, httponly=True, samesite="lax", secure=False)
-        return response
+        return start_session(user_id, {"status": "success", "redirect": "/welcome"})
 
     # Variante 2: E-Mail-Code (2FA)
     elif user.auth_method == "email_otp":
@@ -493,15 +531,10 @@ async def verify_2fa(request: Request):
 
     # 2FA erfolgreich -> Session setzen
     user.last_login_at = now
-    token = secrets.token_hex(32)
-    new_session = SessionToken(token=token, user_id=user.id, created_at=now, expires_at=now + timedelta(days=7))
-    session.add(new_session)
     session.commit()
+    user_id = user.id                                             # ID vor dem Schliessen auslesen
     session.close()
-
-    response = JSONResponse({"message": "Login erfolgreich.", "redirect": "/welcome"}, status_code=200)
-    response.set_cookie(key="session_token", value=token, max_age=7*24*3600, httponly=True, samesite="lax", secure=False)
-    return response
+    return start_session(user_id, {"message": "Login erfolgreich.", "redirect": "/welcome"})
 
 
 @app.post("/api/forgot-password")                                                              # Bonus: Passwort-Reset anfordern

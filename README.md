@@ -72,6 +72,7 @@ Die App ist dann unter `https://<deine-domain>` erreichbar (lokal weiterhin unte
 | `SMTP_PORT` | `587` (STARTTLS) oder `465` (SSL) | `587` |
 | `SMTP_USER` / `SMTP_PASSWORD` | SMTP-Zugangsdaten | leer |
 | `SMTP_FROM` | Absenderadresse | `noreply@smoothingo.com` |
+| `SESSION_COOKIE_SECURE` | Session-Cookie nur über HTTPS senden | `true` |
 | `LOGIN_RESTRICTION_ENABLED` | `true` aktiviert die Zeitbeschränkung | `false` |
 | `LOGIN_ALLOWED_START_HOUR` | Erste erlaubte Stunde (0–23) | `6` |
 | `LOGIN_ALLOWED_END_HOUR` | Erste *nicht mehr* erlaubte Stunde (0–23) | `22` |
@@ -84,13 +85,9 @@ docker compose up -d --force-recreate web
 
 > `docker compose restart` reicht **nicht** – Umgebungsvariablen werden nur beim Erstellen des Containers gesetzt. Ein einfaches `docker compose up -d` genügt nur, wenn Compose den Konfigurationsunterschied selbst erkennt.
 
-> **Hinweis zur Zeitbeschränkung:** `docker-compose.yml` reicht die `LOGIN_*`-Variablen aktuell nicht an den `web`-Container durch. Zum Aktivieren müssen im Service `web` unter `environment:` diese Zeilen ergänzt werden:
-> ```yaml
-> LOGIN_RESTRICTION_ENABLED: ${LOGIN_RESTRICTION_ENABLED:-false}
-> LOGIN_ALLOWED_START_HOUR: ${LOGIN_ALLOWED_START_HOUR:-6}
-> LOGIN_ALLOWED_END_HOUR: ${LOGIN_ALLOWED_END_HOUR:-22}
-> ```
-> Geprüft wird die Serverzeit des Containers (standardmäßig UTC). Gesperrt sind `/api/login` und `/api/verify-2fa`.
+> **Hinweis zur Zeitbeschränkung:** Die `LOGIN_*`-Variablen werden vom `docker-compose.yml` an den `web`-Container durchgereicht. Geprüft wird die Serverzeit des Containers (standardmäßig UTC). Gesperrt sind `/api/login` und `/api/verify-2fa` – beide antworten dann mit HTTP 403.
+>
+> `SESSION_COOKIE_SECURE=true` heißt: Das Session-Cookie wird nur über HTTPS verschickt. Das ist für den Betrieb hinter dem Cloudflare Tunnel richtig. Nur wenn die App testweise über eine LAN-IP **ohne** HTTPS aufgerufen wird, muss der Wert auf `false` – sonst blockiert der Browser das Cookie und der Login funktioniert nicht.
 
 ### E-Mail-Versand
 
@@ -134,6 +131,43 @@ docker compose up -d --force-recreate web
    ```
 
    Der Start-Log bestätigt den Zustand: `[SMTP] E-Mail-Versand: AKTIV (Host: smtp.resend.com, …)`.
+
+## Sicherheitsregeln
+
+Drei Regeln, die den ganzen Login-Schutz ausmachen:
+
+### 1. Ein fremdes Konto kann nicht übernommen werden
+
+Registriert sich jemand mit einer E-Mail, die schon vergeben ist, passiert **nichts** – es sei denn, das eingegebene Passwort stimmt mit dem bestehenden Konto überein.
+
+```
+E-Mail unbekannt          → Konto wird neu angelegt
+E-Mail bekannt, Passwort richtig → Konto wird aktualisiert (z. B. neue Sicherheitsstufe)
+E-Mail bekannt, Passwort falsch → HTTP 401, es ändert sich NICHTS
+```
+
+**Warum:** Ohne diese Prüfung könnte jeder, der eine fremde E-Mail-Adresse kennt, das Konto übernehmen – einfach durch erneutes Registrieren. So braucht man für den Zugriff immer das Passwort.
+
+### 2. Das Session-Cookie ist geschützt
+
+| Flag | Wirkung |
+|---|---|
+| `HttpOnly` | JavaScript im Browser kann das Cookie nicht auslesen (schützt vor Token-Diebstahl per XSS) |
+| `SameSite=Lax` | blockiert Cross-Site-POSTs (Grundschutz gegen CSRF) |
+| `Secure` | das Cookie wird nur über HTTPS verschickt, nie über unverschlüsseltes HTTP |
+| `Max-Age` | läuft nach 7 Tagen ab |
+
+Die Session selbst liegt **serverseitig** in der Tabelle `sessions`, nicht im Token. Deshalb kann ein Logout sie sofort und endgültig ungültig machen.
+
+### 3. Passwörter sind doppelt gehasht
+
+```
+Passwort (Klartext, im Browser)
+   → SHA-256 (Web Crypto API)      → wird übertragen
+   → bcrypt + Salt (auf dem Server) → wird gespeichert
+```
+
+Der Klartext erreicht den Server nie. Aus der Datenbank lässt sich das Passwort nicht zurückrechnen. Der bcrypt-Hash hat zusätzlich ein Salt pro User, gleiche Passwörter erzeugen also unterschiedliche Hashes.
 
 ## Ressourcenverbrauch
 
@@ -185,6 +219,7 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 | `cloudflared` startet ständig neu | `TUNNEL_TOKEN` fehlt oder ist ungültig – Token eintragen oder nur `db web` starten. |
 | `web` startet neu / Datenbankfehler | MySQL ist noch nicht bereit; kurz warten und `docker compose logs web` prüfen. Bei geänderten DB-Zugangsdaten das Volume mit `docker compose down -v` zurücksetzen. |
 | Kein E-Mail-Code erhalten | Ohne SMTP-Konfiguration wird der Code **im Browser angezeigt** und zusätzlich ins Log geschrieben (`docker compose logs web`). Mit SMTP: Zugangsdaten, Port und Absenderdomain prüfen (Fehler stehen als `Mail-Fehler: …` in den Logs). `curl localhost:5000/api/health` zeigt, ob SMTP überhaupt konfiguriert ist. |
+| Registrierung schlägt mit „E-Mail ist bereits registriert" fehl | Die E-Mail existiert schon, das Passwort passt aber nicht. Mit dem **richtigen** Passwort kann die Sicherheitsstufe geändert werden – oder man meldet sich normal an bzw. setzt das Passwort zurück. |
 | Authenticator-Code wird abgelehnt | Uhrzeit von Server und Handy synchronisieren (Toleranz: ±30 Sekunden). |
 | Login meldet „zu dieser Uhrzeit gesperrt" | `LOGIN_RESTRICTION_ENABLED=false` setzen oder die erlaubten Stunden anpassen. |
 | Änderungen an `static/app.js` greifen nicht | Browser-Cache leeren (Strg+Shift+R); die Script-URL enthält eine Versionsnummer in `templates/index.html`. |

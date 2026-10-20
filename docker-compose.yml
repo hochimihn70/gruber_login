@@ -26,6 +26,12 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # Session-Cookie nur ueber HTTPS senden (Standard: true)
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      # Zeitliche Login-Beschraenkung (optional)
+      LOGIN_RESTRICTION_ENABLED: ${LOGIN_RESTRICTION_ENABLED:-false}
+      LOGIN_ALLOWED_START_HOUR: ${LOGIN_ALLOWED_START_HOUR:-6}
+      LOGIN_ALLOWED_END_HOUR: ${LOGIN_ALLOWED_END_HOUR:-22}
     ports:
       - "5000:5000"
     restart: on-failure

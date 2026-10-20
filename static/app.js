@@ -120,6 +120,7 @@ async function postJSON(url, payload) {
   });
   const data = await response.json();
   data.ok = response.ok;
+  data.httpStatus = response.status;      // HTTP-Code (401, 403, 500 ...) getrennt vom App-Status
   return data;
 }
 
@@ -246,6 +247,13 @@ async function onRegister(event) {
 
     if (!result.ok) {
       showMessage(result.error || 'Registrierung fehlgeschlagen.', true);
+      // Konto existiert schon und das Passwort passt nicht -> Hinweis auf den Login geben
+      if (result.httpStatus === 401) {
+        showMessage(
+          (result.error || '') + ' → Du findest die Anmeldung unten auf der Login-Seite.',
+          true
+        );
+      }
       return;
     }
 
