@@ -8,7 +8,7 @@ Kleine Login-Anwendung mit drei wählbaren Anmeldemodi, Session-Schutz, Passwort
   - `password` – nur Passwort
   - `email_otp` – Passwort + 6-stelliger Code per E-Mail (10 Minuten gültig)
   - `totp` – Passwort + Authenticator-App (QR-Code, RFC 6238, z. B. Google Authenticator, Aegis, 2FAS)
-- **Clientseitiges SHA-256:** Das Passwort wird schon im Browser gehasht; der Server speichert davon zusätzlich einen bcrypt-Hash.
+- **Passwort-Hashing mit Argon2id:** Das Passwort geht verschlüsselt (HTTPS) zum Server und wird dort mit Argon2id gehasht – inklusive zufälligem Salt pro User. Das ist der heutige Standard (OWASP) und läuft in Django, Rails, Laravel, Spring und Next.js genauso.
 - **Geschützte Route:** `/welcome` ist nur mit gültiger Session erreichbar, sonst Weiterleitung auf `/`. Die Session ist 7 Tage gültig (HttpOnly-Cookie).
 - **Passwort-Reset** per E-Mail-Code (15 Minuten gültig).
 - **Zeitliche Login-Beschränkung** (optional, siehe unten).
@@ -159,15 +159,29 @@ E-Mail bekannt, Passwort falsch → HTTP 401, es ändert sich NICHTS
 
 Die Session selbst liegt **serverseitig** in der Tabelle `sessions`, nicht im Token. Deshalb kann ein Logout sie sofort und endgültig ungültig machen.
 
-### 3. Passwörter sind doppelt gehasht
+### 3. Passwörter werden mit Argon2id gehasht
 
 ```
-Passwort (Klartext, im Browser)
-   → SHA-256 (Web Crypto API)      → wird übertragen
-   → bcrypt + Salt (auf dem Server) → wird gespeichert
+Passwort (Klartext)
+   → HTTPS (verschlüsselt)          → Server
+   → Argon2id + Zufalls-Salt        → wird in der DB gespeichert
 ```
 
-Der Klartext erreicht den Server nie. Aus der Datenbank lässt sich das Passwort nicht zurückrechnen. Der bcrypt-Hash hat zusätzlich ein Salt pro User, gleiche Passwörter erzeugen also unterschiedliche Hashes.
+**Argon2id** ist der heutige Standard (OWASP Password Storage Cheat Sheet) und läuft in drei Schritten: Es ist **speicherresistent** (ein Angreifer kann nicht einfach viele Hashes parallel berechnen) und **bewusst langsam** – hier rund 50 ms pro Aufruf bei 46 MiB Speicher.
+
+| | Wert |
+|---|---|
+| Algorithmus | Argon2id (`$argon2id$v=19$m=47104,t=1,p=1$…`) |
+| Speicher | 46 MiB |
+| Durchläufe | 1 |
+| Salt | zufällig pro Hash, steckt im Hash-String |
+| Dauer | ca. 50 ms |
+
+Der Salt steckt bereits im gespeicherten Hash – er muss nicht separat in der DB liegen. Zwei User mit dem gleichen Passwort haben deshalb trotzdem zwei verschiedene Hashes.
+
+**Warum nicht bcrypt?** bcrypt ist weiterhin völlig okay und war lange Standard. Argon2id ist schneller *und* speicherresistenter, deshalb wurde hier umgestellt. Beides gilt als sicher – Argon2id ist die Empfehlung für neue Projekte.
+
+> **Hinweis:** Wer von einer älteren Version umsteigt, muss die Passwörter der vorhandenen User neu setzen lassen: Der Hash-Algorithmus hat sich geändert, alte Hashes können nicht geprüft werden. (Praktisch lässt sich das umgehen, indem beim Login ein alter Hash erkannt und durch Argon2id ersetzt wird – für dieses Projekt aber nicht nötig.)
 
 ### 4. Brute-Force wird gebremst
 
@@ -177,13 +191,13 @@ Ein 6-stelliger 2FA-Code hat nur 900.000 Kombinationen – ohne Bremse wäre er 
 |---|---|
 | 2FA-Code | nach **5 Fehlversuchen** wird der Code ungültig (HTTP 429) |
 | Vergleich | mit `secrets.compare_digest` (konstante Laufzeit) |
-| Passwort | bcrypt mit Cost-Faktor 12 – rund 200 ms pro Versuch |
+| Passwort | Argon2id – rund 50 ms pro Versuch |
 
-Für das Passwort ist keine eigene Bremse nötig: Der Server rechnet einen **Dummy-bcrypt-Vergleich** auch dann, wenn die E-Mail unbekannt ist. Sonst wäre die Antwortzeit ein Rauschanzeiger:
+Für das Passwort ist keine eigene Bremse nötig: Der Server rechnet einen **Dummy-Argon2id-Vergleich** auch dann, wenn die E-Mail unbekannt ist. Sonst wäre die Antwortzeit ein Rauschanzeiger:
 
 ```
 vorher:   unbekannte E-Mail  →   6 ms     bekannte E-Mail  →  230 ms   (97 % Unterschied!)
-nachher:  unbekannte E-Mail  → 212 ms     bekannte E-Mail  →  212 ms   (0 % Unterschied)
+nachher:  unbekannte E-Mail  →  76 ms     bekannte E-Mail  →   75 ms   (1 % Unterschied)
 ```
 
 So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
@@ -200,6 +214,12 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 
 > **Hinweis zu Cloudflare:** Der Tunnel injiziert ein eigenes Script in die HTML-Ausgabe (Bot-Erkennung). Die strikte CSP blockiert es – die App ist davon nicht betroffen. Falls es doch nötig wird: `script-src 'self' 'unsafe-inline'`.
 
+### Browser-Cache
+
+Die HTML-Seiten werden mit `Cache-Control: no-cache` ausgeliefert: Der Browser fragt damit bei jedem Aufruf nach, ob sich etwas geändert hat, und lädt die Seite notfalls neu. Ohne diese Angabe würde der Browser eine alte Kopie behalten – und damit auch eine alte `app.js` mit altem Code.
+
+Die statischen Dateien selbst (`app.js`, `style.css`) bekommen die Versionsnummer direkt in der URL (`app.js?v=6`). Wird eine davon geändert, zählt man die Nummer in `templates/index.html` hoch – dann ist der neue Stand garantiert geladen.
+
 ## Ressourcenverbrauch
 
 > **Richtwerte, nicht gemessen** – typische Erfahrungswerte für diese Images im Leerlauf bzw. bei wenigen Nutzern. Auf dem Zielsystem lässt sich der echte Verbrauch mit `docker stats` prüfen.
@@ -207,7 +227,7 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 | Container | RAM (ca.) | CPU im Leerlauf | CPU bei Last |
 |---|---|---|---|
 | `db` (MySQL 8.4) | 400–600 MB | < 1 % | kurze Spitzen bei Abfragen |
-| `web` (FastAPI/uvicorn) | 60–100 MB | < 1 % | bcrypt-Hashing beim Login/Registrieren ca. 50–300 ms CPU-Zeit pro Anfrage |
+| `web` (FastAPI/uvicorn) | 60–100 MB | < 1 % | Argon2id-Hashing beim Login/Registrieren ca. 50 ms CPU-Zeit pro Anfrage |
 | `cloudflared` | 20–50 MB | < 1 % | gering |
 | **Gesamt** | **ca. 0,5–0,8 GB** | **praktisch idle** | – |
 
@@ -253,13 +273,13 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 | Registrierung schlägt mit „E-Mail ist bereits registriert" fehl | Die E-Mail existiert schon, das Passwort passt aber nicht. Mit dem **richtigen** Passwort kann die Sicherheitsstufe geändert werden – oder man meldet sich normal an bzw. setzt das Passwort zurück. |
 | Authenticator-Code wird abgelehnt | Uhrzeit von Server und Handy synchronisieren (Toleranz: ±30 Sekunden). |
 | Login meldet „zu dieser Uhrzeit gesperrt" | `LOGIN_RESTRICTION_ENABLED=false` setzen oder die erlaubten Stunden anpassen. |
-| Änderungen an `static/app.js` greifen nicht | Browser-Cache leeren (Strg+Shift+R); die Script-URL enthält eine Versionsnummer in `templates/index.html`. |
+| Änderungen an `static/app.js` greifen nicht | Die Script-URL enthält eine Versionsnummer in `templates/index.html` – nach einer Änderung dort hochzählen (z. B. `app.js?v=7`). Das HTML selbst wird mit `Cache-Control: no-cache` immer neu validiert, der Browser holt sich also zuverlässig die neue Version. |
 
 ## Architektur
 
 - **FastAPI** (`app.py`) liefert die Seiten aus `templates/` und die API unter `/api/*`; statische Dateien liegen in `static/`.
 - **MySQL 8.4** speichert Benutzer (`users`), Sessions (`sessions`) und temporäre Codes (`email_otps`).
-- **Passwörter:** SHA-256 im Browser, anschließend bcrypt auf dem Server – das Klartext-Passwort erreicht den Server nie und kann aus der Datenbank nicht zurückgerechnet werden.
+- **Passwörter:** Argon2id auf dem Server, mit zufälligem Salt pro User – aus der Datenbank lässt sich ein Passwort nicht zurückrechnen.
 - **Cloudflared** stellt die Verbindung über den Cloudflare Tunnel her (keine offenen Ports nötig).
 
 ### Konfigurations-Ebenen

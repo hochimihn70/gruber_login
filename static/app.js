@@ -100,15 +100,19 @@ function hideDevCode() {
 }
 
 
-// Clientseitige Verschlüsselung (SHA-256 via Web Crypto API)
-// Das Klartextpasswort verlässt NIEMALS den Browser!
-async function hashPassword(plainPassword) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(plainPassword);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
+// ------------------------------------------------------------------------------------------
+// Passwort-Hashing: passiert auf dem SERVER, nicht im Browser.
+//
+// Das ist der Industriestandard (Django, Rails, Laravel, Spring, Next.js):
+//   1. Das Passwort geht verschlüsselt (HTTPS) zum Server.
+//   2. Der Server hasht es mit Argon2id - inklusive zufälligem Salt pro User.
+//
+// Warum NICHT im Browser hashen? Ein Hash im Browser ist selbst wieder ein
+// vollwertiges Passwort ("Pass-the-Hash"): Wer ihn abfängt, kann sich direkt
+// anmelden. Und ein einzelnes SHA-256 ist zum Hashen von Passwörtern viel zu
+// schnell. "SHA-256 im Browser + bcrypt auf dem Server" war deshalb sicherer,
+// aber komplizierter als nötig - ohne echten Zusatznutzen.
+// ------------------------------------------------------------------------------------------
 
 
 // Hilfsfunktion für API-Anfragen
@@ -140,9 +144,8 @@ async function onLogin(event) {
   }
 
   try {
-    // Passwort im Browser hashen vor dem Senden:
-    const password_hash = await hashPassword(password);
-    const result = await postJSON('/api/login', { email, password_hash });
+    // Das Passwort geht verschlüsselt (HTTPS) zum Server, der hasht es mit Argon2id.
+    const result = await postJSON('/api/login', { email, password });
 
     if (!result.ok) {
       showMessage(result.error || 'Login fehlgeschlagen.', true);
@@ -241,9 +244,7 @@ async function onRegister(event) {
   const auth_method = authMethodInput ? authMethodInput.value : 'password';
 
   try {
-    // Passwort im Browser hashen vor dem Senden:
-    const password_hash = await hashPassword(password);
-    const result = await postJSON('/api/register', { email, password_hash, auth_method });
+    const result = await postJSON('/api/register', { email, password, auth_method });
 
     if (!result.ok) {
       showMessage(result.error || 'Registrierung fehlgeschlagen.', true);
@@ -363,11 +364,10 @@ async function onPerformReset(event) {
   }
 
   try {
-    const new_password_hash = await hashPassword(newPassword);
     const result = await postJSON('/api/reset-password', {
       email: resetEmail,
       code,
-      new_password_hash
+      new_password: newPassword
     });
 
     if (result.ok) {

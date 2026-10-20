@@ -8,7 +8,8 @@ from datetime import datetime, timedelta                                        
 from email.mime.multipart import MIMEMultipart                                                 # Für E-Mails mit Text und HTML
 from email.mime.text import MIMEText                                                           # Für E-Mail-Inhalt
 
-import bcrypt                                                                                  # Zum Hashen und Prüfen auf Serverseite
+from argon2 import PasswordHasher                                                                 # Argon2id: heutiger Standard für Passwort-Hashing
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError           # Fehler beim Prüfen eines Hashes
 from fastapi import FastAPI, Request                                                           # FastAPI-Kern
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse                     # HTTP-Antworten
 from fastapi.staticfiles import StaticFiles                                                    # Für CSS und JS
@@ -45,6 +46,10 @@ async def security_headers(request: Request, call_next):
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'"
     )
+    # HTML immer neu validieren lassen. Ohne diese Angabe nutzt der Browser eine
+    # gecachte Kopie (Heuristic Caching) - und lädt dann eine alte app.js-Version.
+    if "text/html" in response.headers.get("content-type", ""):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -57,7 +62,7 @@ class User(Base):                                                               
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True)
-    password: Mapped[str] = mapped_column(String(255))                                         # bcrypt-Hash des clientseitigen SHA-256
+    password: Mapped[str] = mapped_column(String(255))                                         # Argon2id-Hash (inkl. Zufalls-Salt)
     auth_method: Mapped[str] = mapped_column(String(20), default="password")                   # "password", "email_otp" oder "totp"
     totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)                # Base32 Secret für Authenticator-Apps
     created_at: Mapped[datetime] = mapped_column(DateTime)
@@ -129,7 +134,33 @@ def session_cookie_secure() -> bool:                                            
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")                                      # Einfache E-Mail-Prüfung
 MAX_OTP_ATTEMPTS = 5                                                                            # Max. Fehlversuche für einen 2FA-Code
-DUMMY_HASH = bcrypt.hashpw(b"dummy-password-for-timing", bcrypt.gensalt())                       # Dummy-Hash für gleiche Antwortzeiten
+
+
+# ------------------------------------------------------------------------------------------
+# Passwort-Hashing mit Argon2id
+#
+# Argon2id ist der heutige Standard (OWASP Password Storage Cheat Sheet) und läuft in drei
+# Schritten: Argon2id ist speicherresistent (der Angreifer kann nicht einfach viele
+# Hashes parallel berechnen) und bewusst langsam. Der zufaellige Salt steckt bereits
+# im Hash-String, er muss also nicht separat gespeichert werden.
+#
+# Parameter nach OWASP: 46 MiB Speicher, 1 Durchlauf, 1 Thread -> ca. 50 ms pro Aufruf.
+# ------------------------------------------------------------------------------------------
+password_hasher = PasswordHasher(time_cost=1, memory_cost=47104, parallelism=1)
+DUMMY_HASH = password_hasher.hash("dummy-password-for-timing")                                # Dummy-Hash für gleiche Antwortzeiten
+
+
+def hash_password(password: str) -> str:                                                        # Passwort hashen
+    """Hasht ein Passwort mit Argon2id. Das Ergebnis enthält den Zufalls-Salt bereits."""
+    return password_hasher.hash(password)
+
+
+def verify_password(password: str, stored_hash: str) -> bool:                                    # Passwort prüfen
+    """Prüft ein Passwort gegen den gespeicherten Hash. Falsch -> False, kein Fehler."""
+    try:
+        return password_hasher.verify(stored_hash, password)
+    except (VerifyMismatchError, VerificationError, InvalidHashError):
+        return False
 
 
 def is_valid_email(email: str) -> bool:                                                         # E-Mail-Format prüfen
@@ -387,10 +418,10 @@ async def get_current_user(request: Request):
 async def register(request: Request):
     data = await request.json()
     email = data.get("email", "").strip().lower()
-    password_hash = data.get("password_hash", "")                                              # Clientseitig mit SHA-256 gehasht
+    password = data.get("password", "")                                                        # Klartextpasswort (kommt verschlüsselt über HTTPS)
     auth_method = data.get("auth_method", "password").strip().lower()
 
-    if not email or not password_hash:
+    if not email or not password:
         return JSONResponse({"error": "E-Mail und Passwort fehlen."}, status_code=400)
 
     if not is_valid_email(email):
@@ -409,15 +440,14 @@ async def register(request: Request):
     # Konto aktualisiert (z. B. um die Sicherheitsstufe zu ändern).
     # ------------------------------------------------------------------------------------------
     if existing_user is not None:
-        if not bcrypt.checkpw(password_hash.encode(), existing_user.password.encode()):
+        if not verify_password(password, existing_user.password):
             session.close()
             return JSONResponse({
                 "error": "Diese E-Mail ist bereits registriert und das Passwort stimmt nicht überein. "
                          "Bitte melde dich unten an oder setze dein Passwort zurück."
             }, status_code=401)
 
-    salt = bcrypt.gensalt()
-    server_hash = bcrypt.hashpw(password_hash.encode(), salt).decode()
+    server_hash = hash_password(password)
 
     totp_secret = None
     qr_svg = None
@@ -490,24 +520,24 @@ async def login(request: Request):
 
     data = await request.json()
     email = data.get("email", "").strip().lower()
-    password_hash = data.get("password_hash", "")
+    password = data.get("password", "")
 
     if not is_valid_email(email):
         # Kein eigener Fehlertext, sonst könnte man die Formateingabe umgehen und
         # zwischen "E-Mail kaputt" und "E-Mail unbekannt" unterscheiden.
-        bcrypt.checkpw(password_hash.encode(), DUMMY_HASH)      # Antwortzeit angleichen
+        verify_password(password, DUMMY_HASH)                    # Antwortzeit angleichen
         return JSONResponse({"error": "E-Mail oder Passwort ist falsch."}, status_code=401)
 
     session = Session(engine)
     user = session.query(User).filter_by(email=email).first()
     if user is None:
-        # Auch bei unbekannter E-Mail wird ein bcrypt-Vergleich gerechnet. Sonst wäre die
+        # Auch bei unbekannter E-Mail wird ein Argon2-Vergleich gerechnet. Sonst wäre die
         # Antwortzeit ein Rauschanzeiger: 6 ms (User existiert nicht) vs. 230 ms (existiert).
-        bcrypt.checkpw(password_hash.encode(), DUMMY_HASH)
+        verify_password(password, DUMMY_HASH)
         session.close()
         return JSONResponse({"error": "E-Mail oder Passwort ist falsch."}, status_code=401)
 
-    if not bcrypt.checkpw(password_hash.encode(), user.password.encode()):
+    if not verify_password(password, user.password):
         session.close()
         return JSONResponse({"error": "E-Mail oder Passwort ist falsch."}, status_code=401)
 
@@ -659,9 +689,9 @@ async def reset_password(request: Request):
     data = await request.json()
     email = data.get("email", "").strip().lower()
     code = data.get("code", "").strip()
-    new_password_hash = data.get("new_password_hash", "")
+    new_password = data.get("new_password", "")
 
-    if not email or not code or not new_password_hash:
+    if not email or not code or not new_password:
         return JSONResponse({"error": "Alle Felder müssen ausgefüllt sein."}, status_code=400)
 
     session = Session(engine)
@@ -682,8 +712,7 @@ async def reset_password(request: Request):
         session.close()
         return JSONResponse({"error": "Benutzer nicht gefunden."}, status_code=404)
 
-    salt = bcrypt.gensalt()
-    user.password = bcrypt.hashpw(new_password_hash.encode(), salt).decode()
+    user.password = hash_password(new_password)
     session.query(EmailOTP).filter_by(email=email, purpose="reset").delete()
     # Alle bestehenden Sessions des Users beenden. Wer das Passwort zurücksetzt,
     # will (typischerweise) auch, dass niemand sonst mit einer alten Session drin ist.
