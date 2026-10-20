@@ -32,6 +32,12 @@ docker compose up -d --build db web
 
 Danach ist die App unter http://localhost:5000 erreichbar.
 
+> **Kein Cloudflare nötig:** `TUNNEL_TOKEN` darf leer bleiben – die App läuft dann einfach nur lokal. Der Tunnel ist ein **optionales Compose-Profil** und startet mit `docker compose up` gar nicht erst (siehe unten).
+>
+> **E-Mail ist optional:** Ohne `SMTP_PASSWORD` läuft der Dev-Modus – die 2FA-Codes erscheinen dann direkt im Browser und im Log (`docker compose logs -f web`). Damit lassen sich alle drei Anmeldemodi ohne Mailserver testen.
+>
+> **Eigenes `APP_SECRET`:** In der `.env` steht ein Beispielwert. Für den echten Betrieb einen eigenen erzeugen: `python3 -c "import secrets; print(secrets.token_hex(32))"`. Der Wert muss stabil bleiben, sonst lassen sich vorhandene TOTP-Secrets nicht mehr entschlüsseln.
+
 > `db web` startet bewusst nur Datenbank und Webanwendung. Der `cloudflared`-Container braucht ein Tunnel-Token und würde ohne dieses in einer Fehlerschleife laufen. Wenn du den Tunnel nutzen willst, siehe nächster Abschnitt.
 
 Beim ersten Start legt die App die Tabellen `users`, `sessions` und `email_otps` automatisch an. Die MySQL-Daten liegen im Docker-Volume `mysql_data`. Die App wartet über einen Healthcheck, bis MySQL bereit ist (kann beim allerersten Start ca. 20–30 Sekunden dauern).
@@ -55,12 +61,14 @@ Der Tunnel macht die App per HTTPS erreichbar, ohne dass Ports am Router geöffn
    - **Domain:** deine Domain, z. B. `logintest.smoothingo.com`
    - **Type:** `HTTP`
    - **URL:** `web:5000`
-4. Alles starten:
+4. Alles starten – **mit dem Profil `tunnel`**, damit der Tunnel mitstartet:
    ```bash
-   docker compose up -d --build
+   docker compose --profile tunnel up -d --build
    ```
 
 Die App ist dann unter `https://<deine-domain>` erreichbar (lokal weiterhin unter http://localhost:5000).
+
+> **Warum ein Profil?** Der Tunnel braucht ein Token. Ohne Token würde `cloudflared` sofort beenden und immer wieder neu starten – das sieht nach einem Fehler aus, obwohl die App völlig in Ordnung ist. Mit dem Profil startet `docker compose up` nur Datenbank und Webanwendung, der Tunnel läuft nur, wenn man ihn ausdrücklich startet. Zusätzlich gibt es `restart: on-failure:5` – ein ungültiges Token führt zu 5 Versuchen und dann zu einem sauberen Stopp statt zu einer Endlosschleife.
 
 ## Konfiguration (`.env`)
 
@@ -72,6 +80,7 @@ Die App ist dann unter `https://<deine-domain>` erreichbar (lokal weiterhin unte
 | `SMTP_PORT` | `587` (STARTTLS) oder `465` (SSL) | `587` |
 | `SMTP_USER` / `SMTP_PASSWORD` | SMTP-Zugangsdaten | leer |
 | `SMTP_FROM` | Absenderadresse | `noreply@smoothingo.com` |
+| `APP_SECRET` | Server-Geheimnis für HMAC (2FA-Codes) und Verschlüsselung (TOTP-Secret) | zufälliger 64-Zeichen-Wert |
 | `SESSION_COOKIE_SECURE` | Session-Cookie nur über HTTPS senden | `true` |
 | `LOGIN_RESTRICTION_ENABLED` | `true` aktiviert die Zeitbeschränkung | `false` |
 | `LOGIN_ALLOWED_START_HOUR` | Erste erlaubte Stunde (0–23) | `6` |
@@ -207,6 +216,8 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 | Maßnahme | Umsetzung |
 |---|---|
 | Session-Token in der DB | nur als SHA-256-Hash – ein DB-Leak reicht nicht, um die Session zu übernehmen |
+| 2FA-Code in der DB | nur als HMAC-Signatur (`APP_SECRET`) – ein DB-Dump zeigt keinen gültigen Code |
+| TOTP-Secret in der DB | verschlüsselt (AES-GCM via Fernet) – aus dem Dump lässt sich das Secret nicht zurückrechnen |
 | E-Mail-Prüfung | auch serverseitig (nicht nur im Browser) |
 | Sessions beim Passwort-Reset | alle bestehenden Sessions des Users werden beendet |
 | Sicherheits-Header | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy` |
@@ -219,6 +230,26 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 Die HTML-Seiten werden mit `Cache-Control: no-cache` ausgeliefert: Der Browser fragt damit bei jedem Aufruf nach, ob sich etwas geändert hat, und lädt die Seite notfalls neu. Ohne diese Angabe würde der Browser eine alte Kopie behalten – und damit auch eine alte `app.js` mit altem Code.
 
 Die statischen Dateien selbst (`app.js`, `style.css`) bekommen die Versionsnummer direkt in der URL (`app.js?v=6`). Wird eine davon geändert, zählt man die Nummer in `templates/index.html` hoch – dann ist der neue Stand garantiert geladen.
+
+### 6. Was in der Datenbank steht – und was nicht
+
+| Wert | gespeichert als | wiederherstellbar? |
+|---|---|---|
+| Passwort | Argon2id-Hash | nein |
+| Session-Token | SHA-256-Hash | nein |
+| 2FA-Code (E-Mail) | HMAC-SHA256-Signatur | nein |
+| TOTP-Secret | verschlüsselt (Fernet/AES-GCM) | nur mit `APP_SECRET` |
+
+**Warum HMAC für den 2FA-Code?** Ein 6-stelliger Code hat nur 900.000 mögliche Werte – ein einfacher SHA-256-Hash davon wäre aus einem DB-Dump in Sekunden zurückgerechnet. Der HMAC rechnet zusätzlich das `APP_SECRET` ein, das **nur** auf dem Server liegt. Wer den Dump hat, kann mit den 900.000 Kombinationen trotzdem nichts anfangen, weil die Signatur ohne das Secret nicht nachvollziehbar ist.
+
+**Warum Verschlüsselung für das TOTP-Secret?** Anders als ein Code muss das TOTP-Secret **entschlüsselbar** sein – der Server braucht es, um den erwarteten Code zu berechnen. Hashen ist also nicht möglich. Stattdessen wird es mit einem aus `APP_SECRET` abgeleiteten Schlüssel verschlüsselt gespeichert (Fernet = AES-GCM, authentifiziert).
+
+> **Wichtig:** `APP_SECRET` muss **stabil** bleiben. Ändert es sich, lassen sich vorhandene TOTP-Secrets nicht mehr entschlüsseln – die Authenticator-App des Users wäre dann tot. Der Wert steht in der `.env`:
+> ```bash
+> APP_SECRET=<64 Hex-Zeichen>
+> ```
+> Eigenen Wert erzeugen: `python3 -c "import secrets; print(secrets.token_hex(32))"`
+> Fehlt der Wert, startet die App trotzdem – aber mit einer Warnung, und die TOTP-Secrets überleben dann keinen Neustart.
 
 ## Ressourcenverbrauch
 
@@ -244,12 +275,24 @@ docker stats --no-stream
 ## Nützliche Befehle
 
 ```bash
-docker compose ps                  # Status der Container
-docker compose logs -f web         # Logs der App (inkl. Codes)
-docker compose up -d --build web   # Nach Code-Änderungen neu bauen
-docker compose down                # Stoppen (Daten bleiben erhalten)
-docker compose down -v             # Stoppen und Datenbank löschen
+docker compose ps                        # Status der Container
+docker compose logs -f web               # Logs der App (inkl. Codes)
+docker compose up -d --build web         # Nach Code-Änderungen neu bauen
+docker compose down                      # Stoppen (Daten bleiben erhalten)
+docker compose down -v                   # Stoppen und Datenbank löschen
+
+docker compose --profile tunnel up -d    # Tunnel zusätzlich starten
+docker compose --profile tunnel logs -f  # Tunnel-Logs
 ```
+
+### Compose-Profile
+
+| Befehl | Startet |
+|---|---|
+| `docker compose up -d` | nur `db` und `web` → läuft lokal auf http://localhost:5000 |
+| `docker compose --profile tunnel up -d` | zusätzlich `cloudflared` → die App ist auch über die HTTPS-Domain erreichbar |
+
+Der `web`-Container hat einen Healthcheck. `docker compose ps` zeigt deshalb `healthy`, sobald die App wirklich bereit ist – nicht nur, dass der Prozess läuft.
 
 ## Ohne Docker entwickeln
 
@@ -267,7 +310,7 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 
 | Problem | Lösung |
 |---|---|
-| `cloudflared` startet ständig neu | `TUNNEL_TOKEN` fehlt oder ist ungültig – Token eintragen oder nur `db web` starten. |
+| `cloudflared` beendet sich mit Fehler 255 | `TUNNEL_TOKEN` fehlt oder ist ungültig. Entweder Token eintragen und mit `--profile tunnel` starten, oder den Tunnel weglassen – die App läuft auch ohne tunnel. Nach 5 Fehlversuchen stoppt der Container (keine Endlosschleife). |
 | `web` startet neu / Datenbankfehler | MySQL ist noch nicht bereit; kurz warten und `docker compose logs web` prüfen. Bei geänderten DB-Zugangsdaten das Volume mit `docker compose down -v` zurücksetzen. |
 | Kein E-Mail-Code erhalten | Ohne SMTP-Konfiguration wird der Code **im Browser angezeigt** und zusätzlich ins Log geschrieben (`docker compose logs web`). Mit SMTP: Zugangsdaten, Port und Absenderdomain prüfen (Fehler stehen als `Mail-Fehler: …` in den Logs). `curl localhost:5000/api/health` zeigt, ob SMTP überhaupt konfiguriert ist. |
 | Registrierung schlägt mit „E-Mail ist bereits registriert" fehl | Die E-Mail existiert schon, das Passwort passt aber nicht. Mit dem **richtigen** Passwort kann die Sicherheitsstufe geändert werden – oder man meldet sich normal an bzw. setzt das Passwort zurück. |

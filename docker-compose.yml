@@ -35,13 +35,26 @@ services:
     ports:
       - "5000:5000"
     restart: on-failure
+    healthcheck:
+      # Prueft, ob die App wirklich bereit ist (nicht nur, ob der Prozess laeuft).
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health', timeout=3)\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       db:
         condition: service_healthy
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    restart: unless-stopped
+    # Opt-in: der Tunnel startet nur mit "--profile tunnel".
+    # Grund: ohne TUNNEL_TOKEN (z. B. beim frischen Klon für die lokale Demo) laeuft
+    # cloudflared sonst in einer Endlosschleife und sieht kaputt aus.
+    profiles: ["tunnel"]
+    # Kein Endlos-Neustart: bei ungueltigem Token gibt es 5 Versuche, dann stoppt der
+    # Container sichtbar - die App laeuft davon unbeeinflusst weiter.
+    restart: on-failure:5
     environment:
       - TUNNEL_TOKEN=${TUNNEL_TOKEN}
     command: tunnel --no-autoupdate run
