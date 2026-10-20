@@ -32,6 +32,12 @@ docker compose up -d --build db web
 
 Danach ist die App unter http://localhost:5000 erreichbar.
 
+> **Kein Cloudflare nötig:** `TUNNEL_TOKEN` darf leer bleiben – die App läuft dann einfach nur lokal. Wer den Tunnel nutzen will, trägt das Token ein und startet alle Services (`docker compose up -d --build`).
+>
+> **E-Mail ist optional:** Ohne `SMTP_PASSWORD` läuft der Dev-Modus – die 2FA-Codes erscheinen dann direkt im Browser und im Log (`docker compose logs -f web`). Damit lassen sich alle drei Anmeldemodi ohne Mailserver testen.
+>
+> **Eigenes `APP_SECRET`:** In der `.env` steht ein Beispielwert. Für den echten Betrieb einen eigenen erzeugen: `python3 -c "import secrets; print(secrets.token_hex(32))"`. Der Wert muss stabil bleiben, sonst lassen sich vorhandene TOTP-Secrets nicht mehr entschlüsseln.
+
 > `db web` startet bewusst nur Datenbank und Webanwendung. Der `cloudflared`-Container braucht ein Tunnel-Token und würde ohne dieses in einer Fehlerschleife laufen. Wenn du den Tunnel nutzen willst, siehe nächster Abschnitt.
 
 Beim ersten Start legt die App die Tabellen `users`, `sessions` und `email_otps` automatisch an. Die MySQL-Daten liegen im Docker-Volume `mysql_data`. Die App wartet über einen Healthcheck, bis MySQL bereit ist (kann beim allerersten Start ca. 20–30 Sekunden dauern).
@@ -72,6 +78,7 @@ Die App ist dann unter `https://<deine-domain>` erreichbar (lokal weiterhin unte
 | `SMTP_PORT` | `587` (STARTTLS) oder `465` (SSL) | `587` |
 | `SMTP_USER` / `SMTP_PASSWORD` | SMTP-Zugangsdaten | leer |
 | `SMTP_FROM` | Absenderadresse | `noreply@smoothingo.com` |
+| `APP_SECRET` | Server-Geheimnis für HMAC (2FA-Codes) und Verschlüsselung (TOTP-Secret) | zufälliger 64-Zeichen-Wert |
 | `SESSION_COOKIE_SECURE` | Session-Cookie nur über HTTPS senden | `true` |
 | `LOGIN_RESTRICTION_ENABLED` | `true` aktiviert die Zeitbeschränkung | `false` |
 | `LOGIN_ALLOWED_START_HOUR` | Erste erlaubte Stunde (0–23) | `6` |
@@ -207,6 +214,8 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 | Maßnahme | Umsetzung |
 |---|---|
 | Session-Token in der DB | nur als SHA-256-Hash – ein DB-Leak reicht nicht, um die Session zu übernehmen |
+| 2FA-Code in der DB | nur als HMAC-Signatur (`APP_SECRET`) – ein DB-Dump zeigt keinen gültigen Code |
+| TOTP-Secret in der DB | verschlüsselt (AES-GCM via Fernet) – aus dem Dump lässt sich das Secret nicht zurückrechnen |
 | E-Mail-Prüfung | auch serverseitig (nicht nur im Browser) |
 | Sessions beim Passwort-Reset | alle bestehenden Sessions des Users werden beendet |
 | Sicherheits-Header | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy` |
@@ -219,6 +228,26 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 Die HTML-Seiten werden mit `Cache-Control: no-cache` ausgeliefert: Der Browser fragt damit bei jedem Aufruf nach, ob sich etwas geändert hat, und lädt die Seite notfalls neu. Ohne diese Angabe würde der Browser eine alte Kopie behalten – und damit auch eine alte `app.js` mit altem Code.
 
 Die statischen Dateien selbst (`app.js`, `style.css`) bekommen die Versionsnummer direkt in der URL (`app.js?v=6`). Wird eine davon geändert, zählt man die Nummer in `templates/index.html` hoch – dann ist der neue Stand garantiert geladen.
+
+### 6. Was in der Datenbank steht – und was nicht
+
+| Wert | gespeichert als | wiederherstellbar? |
+|---|---|---|
+| Passwort | Argon2id-Hash | nein |
+| Session-Token | SHA-256-Hash | nein |
+| 2FA-Code (E-Mail) | HMAC-SHA256-Signatur | nein |
+| TOTP-Secret | verschlüsselt (Fernet/AES-GCM) | nur mit `APP_SECRET` |
+
+**Warum HMAC für den 2FA-Code?** Ein 6-stelliger Code hat nur 900.000 mögliche Werte – ein einfacher SHA-256-Hash davon wäre aus einem DB-Dump in Sekunden zurückgerechnet. Der HMAC rechnet zusätzlich das `APP_SECRET` ein, das **nur** auf dem Server liegt. Wer den Dump hat, kann mit den 900.000 Kombinationen trotzdem nichts anfangen, weil die Signatur ohne das Secret nicht nachvollziehbar ist.
+
+**Warum Verschlüsselung für das TOTP-Secret?** Anders als ein Code muss das TOTP-Secret **entschlüsselbar** sein – der Server braucht es, um den erwarteten Code zu berechnen. Hashen ist also nicht möglich. Stattdessen wird es mit einem aus `APP_SECRET` abgeleiteten Schlüssel verschlüsselt gespeichert (Fernet = AES-GCM, authentifiziert).
+
+> **Wichtig:** `APP_SECRET` muss **stabil** bleiben. Ändert es sich, lassen sich vorhandene TOTP-Secrets nicht mehr entschlüsseln – die Authenticator-App des Users wäre dann tot. Der Wert steht in der `.env`:
+> ```bash
+> APP_SECRET=<64 Hex-Zeichen>
+> ```
+> Eigenen Wert erzeugen: `python3 -c "import secrets; print(secrets.token_hex(32))"`
+> Fehlt der Wert, startet die App trotzdem – aber mit einer Warnung, und die TOTP-Secrets überleben dann keinen Neustart.
 
 ## Ressourcenverbrauch
 

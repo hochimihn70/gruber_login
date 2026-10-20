@@ -1,4 +1,6 @@
-import hashlib                                                                                 # Für SHA-256 (Session-Token in der DB hashen)
+import base64                                                                                 # Für die Base64-Kodierung des Verschlüsselungsschlüssels
+import hashlib                                                                                 # Für SHA-256 (Session-Token in der DB hashen, Schlüssel ableiten)
+import hmac                                                                                    # Für HMAC (2FA-Code signieren statt im Klartext zu speichern)
 import io                                                                                      # Für Byte-Puffer (QR-Code-Erzeugung)
 import os                                                                                      # Zugriff auf Umgebungsvariablen (DATABASE_URL, SMTP_*)
 import re                                                                                      # Für die E-Mail-Formatprüfung
@@ -10,6 +12,7 @@ from email.mime.text import MIMEText                                            
 
 from argon2 import PasswordHasher                                                                 # Argon2id: heutiger Standard für Passwort-Hashing
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError           # Fehler beim Prüfen eines Hashes
+from cryptography.fernet import Fernet, InvalidToken                                             # Verschlüsselung für das TOTP-Secret
 from fastapi import FastAPI, Request                                                           # FastAPI-Kern
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse                     # HTTP-Antworten
 from fastapi.staticfiles import StaticFiles                                                    # Für CSS und JS
@@ -64,7 +67,7 @@ class User(Base):                                                               
     email: Mapped[str] = mapped_column(String(320), unique=True)
     password: Mapped[str] = mapped_column(String(255))                                         # Argon2id-Hash (inkl. Zufalls-Salt)
     auth_method: Mapped[str] = mapped_column(String(20), default="password")                   # "password", "email_otp" oder "totp"
-    totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)                # Base32 Secret für Authenticator-Apps
+    totp_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)               # Verschlüsseltes TOTP-Secret (Base32)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)            # Letzter Login (für Analysen/Zeitprüfung)
 
@@ -84,7 +87,7 @@ class EmailOTP(Base):                                                           
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(320), index=True)
-    code: Mapped[str] = mapped_column(String(6))
+    code: Mapped[str] = mapped_column(String(64))                                            # HMAC-Signatur des Codes (nicht der Code selbst)
     purpose: Mapped[str] = mapped_column(String(20), default="2fa")                            # "2fa" oder "reset"
     attempts: Mapped[int] = mapped_column(Integer, default=0)                                 # Fehlversuche (Brute-Force-Bremse)
     created_at: Mapped[datetime] = mapped_column(DateTime)
@@ -100,16 +103,99 @@ with engine.connect() as conn:
         if "auth_method" not in cols:
             conn.exec_driver_sql("ALTER TABLE users ADD COLUMN auth_method VARCHAR(20) DEFAULT 'password'")
         if "totp_secret" not in cols:
-            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64) NULL")
-        
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN totp_secret VARCHAR(255) NULL")
+        else:
+            # breiter machen: das TOTP-Secret wird jetzt verschlüsselt gespeichert
+            conn.exec_driver_sql("ALTER TABLE users MODIFY COLUMN totp_secret VARCHAR(255) NULL")
+
         otp_cols = [r[0] for r in conn.exec_driver_sql("SHOW COLUMNS FROM email_otps").fetchall()]
         if "purpose" not in otp_cols:
             conn.exec_driver_sql("ALTER TABLE email_otps ADD COLUMN purpose VARCHAR(20) DEFAULT '2fa'")
         if "attempts" not in otp_cols:
             conn.exec_driver_sql("ALTER TABLE email_otps ADD COLUMN attempts INT DEFAULT 0")
+        # breiter machen: statt des 6-stelligen Codes steht jetzt eine 64-stellige HMAC-Signatur
+        conn.exec_driver_sql("ALTER TABLE email_otps MODIFY COLUMN code VARCHAR(64)")
         conn.commit()
     except Exception as e:
         pass
+
+
+# ------------------------------------------------------------------------------------------
+# Server-Geheimnis (APP_SECRET)
+#
+# Wird für zwei Dinge gebraucht:
+#   1. HMAC über die 2FA-Codes  -> in der DB steht keine gültige Code-Ziffernfolge mehr
+#   2. Verschlüsselung des TOTP-Secrets -> in der DB steht kein lesbares Secret mehr
+#
+# Wichtig: Das Geheimnis muss stabil sein, sonst lässt sich das TOTP-Secret nach einem
+# Neustart nicht mehr entschlüsseln. Deshalb kommt es aus der .env.
+# ------------------------------------------------------------------------------------------
+def app_secret() -> bytes:
+    """Liefert das Server-Geheimnis. Fehlt es, wird einmalig ein zufälliges erzeugt -
+    dann überleben aber die TOTP-Secrets keinen Container-Neustart."""
+    global _APP_SECRET
+    if _APP_SECRET is None:
+        configured = os.environ.get("APP_SECRET", "").strip()
+        if configured:
+            _APP_SECRET = configured.encode()
+        else:
+            _APP_SECRET = secrets.token_bytes(32)
+            print("[SECRET] WARNUNG: Kein APP_SECRET in der .env gesetzt - es wurde ein "
+                  "zufälliges Geheimnis erzeugt.\n"
+                  "         Nach einem Neustart des Containers können vorhandene TOTP-Secrets "
+                  "nicht mehr entschlüsselt werden.\n"
+                  "         In der .env eintragen: APP_SECRET=<eigener Wert>", flush=True)
+    return _APP_SECRET
+
+
+_APP_SECRET: bytes | None = None
+
+
+def hmac_code(email: str, purpose: str, code: str) -> str:
+    """Signiert einen 2FA-Code mit HMAC-SHA256.
+
+    In der Datenbank steht damit NICHT mehr der Code selbst, sondern nur diese
+    Signatur. Ein DB-Dump zeigt damit keinen gültigen Bestätigungscode mehr.
+    Für die Prüfung wird aus der eingegebenen Ziffernfolge dieselbe Signatur
+    berechnet und verglichen.
+    """
+    message = f"{email}|{purpose}|{code}".encode()
+    return hmac.new(app_secret(), message, hashlib.sha256).hexdigest()
+
+
+def _fernet() -> Fernet:
+    """Verschlüsselungsschlüssel aus dem Server-Geheimnis ableiten (Fernet erwartet 32 Byte)."""
+    key = base64.urlsafe_b64encode(hashlib.sha256(app_secret()).digest())
+    return Fernet(key)
+
+
+def encrypt_secret(plaintext: str) -> str:
+    """Verschlüsselt einen Wert (z. B. das TOTP-Secret) für die Datenbank."""
+    return _fernet().encrypt(plaintext.encode()).decode()
+
+
+def decrypt_secret(ciphertext: str) -> str | None:
+    """Entschlüsselt einen Wert. Bei falschem Schlüssel oder kaputten Daten -> None."""
+    try:
+        return _fernet().decrypt(ciphertext.encode()).decode()
+    except (InvalidToken, ValueError):
+        return None
+
+
+# Nachrüsten: alte Klartext-Secrets verschlüsseln und alte Klartext-Codes entfernen.
+# (Nur nötig beim Umstieg von einer älteren Version - für neue Installationen ein No-op.)
+try:
+    with engine.connect() as conn:
+        rows = conn.exec_driver_sql("SELECT id, totp_secret FROM users WHERE totp_secret IS NOT NULL;").fetchall()
+        for row in rows:
+            if not str(row[1]).startswith("gAAAA"):        # kein Fernet-Token -> noch im Klartext
+                conn.exec_driver_sql("UPDATE users SET totp_secret = ? WHERE id = ?",
+                                     (encrypt_secret(str(row[1])), row[0]))
+        # alte Codes im Klartext sind jetzt unbrauchbar (Prüfung läuft über HMAC) -> weg damit
+        conn.exec_driver_sql("DELETE FROM email_otps WHERE LENGTH(code) <= 10;")
+        conn.commit()
+except Exception:
+    pass
 
 
 # Zeitliche Beschränkung (optional konfigurierbar via .env für Demonstrationszwecke)
@@ -449,27 +535,33 @@ async def register(request: Request):
 
     server_hash = hash_password(password)
 
-    totp_secret = None
+    totp_secret = None          # Klartext-Secret (nur für QR-Code und Antwort)
+    stored_totp_secret = None   # verschlüsselte Fassung für die Datenbank
     qr_svg = None
     if auth_method == "totp":
         if existing_user is not None and existing_user.auth_method == "totp" and existing_user.totp_secret:
-            totp_secret = existing_user.totp_secret            # Secret beibehalten -> vorhandene App funktioniert weiter
+            # Secret beibehalten -> die vorhandene Authenticator-App funktioniert weiter
+            totp_secret = decrypt_secret(existing_user.totp_secret)
+            if totp_secret is None:
+                # Altes Format (unverschlüsselt) oder Schlüssel passt nicht -> neues Secret
+                totp_secret = pyotp.random_base32()
         else:
             totp_secret = pyotp.random_base32()
+        stored_totp_secret = encrypt_secret(totp_secret)
         qr_svg = generate_totp_qr_svg(email, totp_secret)
 
     now = datetime.now()
     if existing_user is not None:
         existing_user.password = server_hash
         existing_user.auth_method = auth_method
-        existing_user.totp_secret = totp_secret
+        existing_user.totp_secret = stored_totp_secret
         user = existing_user
     else:
         user = User(
             email=email,
             password=server_hash,
             auth_method=auth_method,
-            totp_secret=totp_secret,
+            totp_secret=stored_totp_secret,
             created_at=now
         )
         session.add(user)
@@ -490,7 +582,9 @@ async def register(request: Request):
         otp_code = f"{secrets.randbelow(900000) + 100000}"
         expires_at = now + timedelta(minutes=10)
         session.query(EmailOTP).filter_by(email=email, purpose="2fa").delete()
-        new_otp = EmailOTP(email=email, code=otp_code, purpose="2fa", created_at=now, expires_at=expires_at)
+        # In der DB steht nur die HMAC-Signatur, nicht der Code selbst
+        new_otp = EmailOTP(email=email, code=hmac_code(email, "2fa", otp_code), purpose="2fa",
+                           created_at=now, expires_at=expires_at)
         session.add(new_otp)
         session.commit()
         session.close()
@@ -556,7 +650,9 @@ async def login(request: Request):
         otp_code = f"{secrets.randbelow(900000) + 100000}"
         expires_at = now + timedelta(minutes=10)
         session.query(EmailOTP).filter_by(email=email, purpose="2fa").delete()
-        new_otp = EmailOTP(email=email, code=otp_code, purpose="2fa", created_at=now, expires_at=expires_at)
+        # In der DB steht nur die HMAC-Signatur, nicht der Code selbst
+        new_otp = EmailOTP(email=email, code=hmac_code(email, "2fa", otp_code), purpose="2fa",
+                           created_at=now, expires_at=expires_at)
         session.add(new_otp)
         session.commit()
         session.close()
@@ -611,7 +707,8 @@ async def verify_2fa(request: Request):
             session.close()
             return JSONResponse({"error": "Ungültiger oder abgelaufener E-Mail-Code."}, status_code=400)
 
-        if not secrets.compare_digest(otp.code, code):           # falscher Code -> Versuch zählen
+        # Signatur des eingegebenen Codes berechnen und vergleichen
+        if not secrets.compare_digest(otp.code, hmac_code(email, "2fa", code)):
             otp.attempts += 1
             remaining = MAX_OTP_ATTEMPTS - otp.attempts           # Wert VOR dem Commit lesen
             if remaining <= 0:
@@ -635,7 +732,13 @@ async def verify_2fa(request: Request):
         if not user.totp_secret:
             session.close()
             return JSONResponse({"error": "TOTP nicht eingerichtet."}, status_code=400)
-        totp = pyotp.TOTP(user.totp_secret)
+        plain_secret = decrypt_secret(user.totp_secret)
+        if not plain_secret:
+            session.close()
+            return JSONResponse({
+                "error": "TOTP-Secret konnte nicht entschlüsselt werden. Bitte die App neu einrichten."
+            }, status_code=400)
+        totp = pyotp.TOTP(plain_secret)
         if not totp.verify(code, valid_window=1):                                              # Toleriert kleine Zeitabweichungen (+/- 30s)
             session.close()
             return JSONResponse({"error": "Falscher Authenticator-Code."}, status_code=400)
@@ -664,7 +767,8 @@ async def forgot_password(request: Request):
     code = f"{secrets.randbelow(900000) + 100000}"
     now = datetime.now()
     session.query(EmailOTP).filter_by(email=email, purpose="reset").delete()
-    new_otp = EmailOTP(email=email, code=code, purpose="reset", created_at=now, expires_at=now + timedelta(minutes=15))
+    new_otp = EmailOTP(email=email, code=hmac_code(email, "reset", code), purpose="reset",
+                       created_at=now, expires_at=now + timedelta(minutes=15))
     session.add(new_otp)
     session.commit()
     session.close()
@@ -698,7 +802,7 @@ async def reset_password(request: Request):
     now = datetime.now()
     otp = session.query(EmailOTP).filter(
         EmailOTP.email == email,
-        EmailOTP.code == code,
+        EmailOTP.code == hmac_code(email, "reset", code),
         EmailOTP.purpose == "reset",
         EmailOTP.expires_at > now
     ).first()
