@@ -1,18 +1,18 @@
-import io                                                                                      # Fuer Byte-Puffer (QR-Code-Erzeugung)
+import io                                                                                      # Für Byte-Puffer (QR-Code-Erzeugung)
 import os                                                                                      # Zugriff auf Umgebungsvariablen (DATABASE_URL, SMTP_*)
-import secrets                                                                                 # Fuer kryptografisch sichere Tokens und Zufallscodes
-import smtplib                                                                                 # Fuer E-Mail-Versand ueber SMTP
-from datetime import datetime, timedelta                                                       # Fuer Datum, Uhrzeit und Zeitdifferenzen
-from email.mime.multipart import MIMEMultipart                                                 # Fuer E-Mails mit Text und HTML
-from email.mime.text import MIMEText                                                           # Fuer E-Mail-Inhalt
+import secrets                                                                                 # Für kryptografisch sichere Tokens und Zufallscodes
+import smtplib                                                                                 # Für E-Mail-Versand über SMTP
+from datetime import datetime, timedelta                                                       # Für Datum, Uhrzeit und Zeitdifferenzen
+from email.mime.multipart import MIMEMultipart                                                 # Für E-Mails mit Text und HTML
+from email.mime.text import MIMEText                                                           # Für E-Mail-Inhalt
 
-import bcrypt                                                                                  # Zum Hashen und Pruefen auf Serverseite
+import bcrypt                                                                                  # Zum Hashen und Prüfen auf Serverseite
 from fastapi import FastAPI, Request                                                           # FastAPI-Kern
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse                     # HTTP-Antworten
-from fastapi.staticfiles import StaticFiles                                                    # Fuer CSS und JS
-import pyotp                                                                                   # Fuer TOTP Authenticator (RFC 6238)
-import qrcode                                                                                  # Fuer QR-Codes
-import qrcode.image.svg                                                                        # SVG-Generator (benoetigt kein Pillow)
+from fastapi.staticfiles import StaticFiles                                                    # Für CSS und JS
+import pyotp                                                                                   # Für TOTP Authenticator (RFC 6238)
+import qrcode                                                                                  # Für QR-Codes
+import qrcode.image.svg                                                                        # SVG-Generator (benötigt kein Pillow)
 from sqlalchemy import DateTime, Integer, String, create_engine, text                         # SQLAlchemy Spaltentypen
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column                     # SQLAlchemy ORM
 
@@ -33,9 +33,9 @@ class User(Base):                                                               
     email: Mapped[str] = mapped_column(String(320), unique=True)
     password: Mapped[str] = mapped_column(String(255))                                         # bcrypt-Hash des clientseitigen SHA-256
     auth_method: Mapped[str] = mapped_column(String(20), default="password")                   # "password", "email_otp" oder "totp"
-    totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)                # Base32 Secret fuer Authenticator-Apps
+    totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)                # Base32 Secret für Authenticator-Apps
     created_at: Mapped[datetime] = mapped_column(DateTime)
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)            # Letzter Login (fuer Analysen/Zeitpruefung)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)            # Letzter Login (für Analysen/Zeitprüfung)
 
 
 class SessionToken(Base):                                                                      # Tabelle "sessions"
@@ -61,7 +61,7 @@ class EmailOTP(Base):                                                           
 
 Base.metadata.create_all(engine)                                                               # Tabellen anlegen falls neu
 
-# Automatische Spalten-Pruefung fuer bestehende Datenbanken (Migration)
+# Automatische Spalten-Prüfung für bestehende Datenbanken (Migration)
 with engine.connect() as conn:
     try:
         cols = [r[0] for r in conn.exec_driver_sql("SHOW COLUMNS FROM users").fetchall()]
@@ -78,12 +78,12 @@ with engine.connect() as conn:
         pass
 
 
-# Zeitliche Beschraenkung (optional konfigurierbar via .env fuer Demonstrationszwecke)
+# Zeitliche Beschränkung (optional konfigurierbar via .env für Demonstrationszwecke)
 LOGIN_RESTRICTION_ENABLED = os.environ.get("LOGIN_RESTRICTION_ENABLED", "false").lower() == "true"
 LOGIN_ALLOWED_START_HOUR = int(os.environ.get("LOGIN_ALLOWED_START_HOUR", "6"))
 LOGIN_ALLOWED_END_HOUR = int(os.environ.get("LOGIN_ALLOWED_END_HOUR", "22"))
 
-def is_login_allowed_now() -> tuple[bool, str]:                                                # Zeitliche Beschraenkung pruefen
+def is_login_allowed_now() -> tuple[bool, str]:                                                # Zeitliche Beschränkung prüfen
     if not LOGIN_RESTRICTION_ENABLED:
         return True, ""
     current_hour = datetime.now().hour
@@ -92,14 +92,14 @@ def is_login_allowed_now() -> tuple[bool, str]:                                 
     return True, ""
 
 
-def session_cookie_secure() -> bool:                                                            # Session-Cookie nur ueber HTTPS senden?
-    """Standard: ja. Ueber die .env abschaltbar (SESSION_COOKIE_SECURE=false) - noetig,
-    wenn die App testweise ueber eine LAN-IP ohne HTTPS aufgerufen wird."""
+def session_cookie_secure() -> bool:                                                            # Session-Cookie nur über HTTPS senden?
+    """Standard: ja. Über die .env abschaltbar (SESSION_COOKIE_SECURE=false) - nötig,
+    wenn die App testweise über eine LAN-IP ohne HTTPS aufgerufen wird."""
     return os.environ.get("SESSION_COOKIE_SECURE", "true").strip().lower() in ("true", "1", "yes", "on")
 
 
 def start_session(user_id: int, payload: dict) -> JSONResponse:                                 # Session anlegen + Cookie setzen
-    """Legt eine 7-Tage-Session an und haengt das Session-Cookie an die Antwort.
+    """Legt eine 7-Tage-Session an und hängt das Session-Cookie an die Antwort.
 
     Diese eine Funktion ersetzt dreifach kopierten Code - das Cookie kann so nur
     an EINER Stelle konfiguriert werden.
@@ -117,8 +117,8 @@ def start_session(user_id: int, payload: dict) -> JSONResponse:                 
         value=token,
         max_age=7 * 24 * 3600,                                                                   # 7 Tage
         httponly=True,                                                                          # JavaScript kann das Cookie nicht auslesen
-        samesite="lax",                                                                         # schuetzt gegen CSRF
-        secure=session_cookie_secure(),                                                         # nur ueber HTTPS senden
+        samesite="lax",                                                                         # schützt gegen CSRF
+        secure=session_cookie_secure(),                                                         # nur über HTTPS senden
     )
     return response
 
@@ -136,8 +136,8 @@ def generate_totp_qr_svg(email: str, secret: str) -> str:                       
 def smtp_config() -> dict:                                                                    # SMTP-Konfiguration aus der Umgebung
     """Liest die SMTP-Konfiguration aus der Umgebung.
 
-    Quelle ist ausschliesslich die .env-Datei (via docker-compose -> Container-ENV).
-    Im Code ist bewusst NICHTS hart verdrahtet - alle Werte kommen von aussen.
+    Quelle ist ausschließlich die .env-Datei (via docker-compose -> Container-ENV).
+    Im Code ist bewusst NICHTS hart verdrahtet - alle Werte kommen von außen.
     """
     return {
         "host": os.environ.get("SMTP_HOST", "").strip(),
@@ -157,7 +157,7 @@ def smtp_missing_keys() -> list[str]:                                           
 def smtp_is_configured() -> bool:                                                              # Ist der E-Mail-Versand einsatzbereit?
     """SMTP gilt erst als konfiguriert, wenn Host, Passwort UND Absender gesetzt sind.
 
-    So laeuft die App im Dev-Modus weiter, solange z. B. der API-Key noch fehlt -
+    So läuft die App im Dev-Modus weiter, solange z. B. der API-Key noch fehlt -
     statt mit einem halb konfigurierten Server ins Zeitouts zu laufen.
     """
     return not smtp_missing_keys()
@@ -166,7 +166,7 @@ def smtp_is_configured() -> bool:                                               
 def send_otp_email(to_email: str, otp_code: str, purpose: str = "2fa") -> bool:                # Versendet E-Mails via SMTP
     """Schickt den Bestätigungscode per E-Mail.
 
-    Rueckgabe: True  = E-Mail erfolgreich verschickt
+    Rückgabe: True  = E-Mail erfolgreich verschickt
                False = nicht verschickt (kein SMTP konfiguriert ODER Versandfehler)
     """
     smtp_host = os.environ.get("SMTP_HOST", "").strip()
@@ -189,7 +189,7 @@ def send_otp_email(to_email: str, otp_code: str, purpose: str = "2fa") -> bool: 
     msg["From"] = smtp_from
     msg["To"] = to_email
 
-    text_content = f"Hallo!\n\nDein Code lautet: {otp_code}\nEr ist 10 Minuten gueltig.\n"
+    text_content = f"Hallo!\n\nDein Code lautet: {otp_code}\nEr ist 10 Minuten gültig.\n"
     html_content = f"""
     <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
       <h2 style="color: #333;">{title}</h2>
@@ -233,12 +233,12 @@ else:
     print("       Die Codes stehen nur im Log und werden direkt im Browser angezeigt.", flush=True)
 
 
-def otp_response(email: str, otp_code: str, sent: bool) -> dict:                              # Antwort fuer den 2FA-Schritt
-    """Baut die Antwort, die nach dem Anfordern eines E-Mail-Codes zurueckgegeben wird.
+def otp_response(email: str, otp_code: str, sent: bool) -> dict:                              # Antwort für den 2FA-Schritt
+    """Baut die Antwort, die nach dem Anfordern eines E-Mail-Codes zurückgegeben wird.
 
     Im Dev-Modus (kein SMTP-Server konfiguriert) wird der Code direkt mitgeschickt und
     im Browser angezeigt - so bleibt der Login auch ohne Mailserver demonstrierbar
-    und die UI behauptet nicht faelschlich, es sei eine E-Mail verschickt worden.
+    und die UI behauptet nicht fälschlich, es sei eine E-Mail verschickt worden.
     """
     if sent:
         message = f"Bestätigungscode wurde an {email} gesendet!"
@@ -261,7 +261,7 @@ def show_login_page():
     return FileResponse("templates/index.html")
 
 
-@app.get("/welcome")                                                                           # Geschuetzte Willkommensseite
+@app.get("/welcome")                                                                           # Geschützte Willkommensseite
 def show_welcome_page(request: Request):
     token = request.cookies.get("session_token")
     if not token:
@@ -307,7 +307,7 @@ async def health():
     }
 
 
-@app.get("/api/me")                                                                            # Liefert Benutzerdaten fuer /welcome
+@app.get("/api/me")                                                                            # Liefert Benutzerdaten für /welcome
 async def get_current_user(request: Request):
     token = request.cookies.get("session_token")
     if not token:
@@ -351,10 +351,10 @@ async def register(request: Request):
     existing_user = session.query(User).filter_by(email=email).first()
 
     # ------------------------------------------------------------------------------------------
-    # SICHERHEITSREGEL: Ein bestehendes Konto darf NIEMALS ohne Passwort ueberschrieben werden.
-    # Sonst koennte jeder, der eine fremde E-Mail-Adresse kennt, das Konto uebernehmen.
+    # SICHERHEITSREGEL: Ein bestehendes Konto darf NIEMALS ohne Passwort überschrieben werden.
+    # Sonst könnte jeder, der eine fremde E-Mail-Adresse kennt, das Konto übernehmen.
     # Wer die E-Mail schon hat, muss also das aktuelle Passwort eingeben - dann wird das
-    # Konto aktualisiert (z. B. um die Sicherheitsstufe zu aendern).
+    # Konto aktualisiert (z. B. um die Sicherheitsstufe zu ändern).
     # ------------------------------------------------------------------------------------------
     if existing_user is not None:
         if not bcrypt.checkpw(password_hash.encode(), existing_user.password.encode()):
@@ -394,16 +394,16 @@ async def register(request: Request):
 
     session.commit()
 
-    # Sofort in den entsprechenden Ablauf uebergehen (kein toter Klick mehr!):
+    # Sofort in den entsprechenden Ablauf übergehen (kein toter Klick mehr!):
     # Fall 1: Nur Passwort -> Direkt einloggen und zu /welcome
     if auth_method == "password":
         user.last_login_at = now
         session.commit()
-        user_id = user.id                                         # ID vor dem Schliessen auslesen (danach ist das Objekt detached)
+        user_id = user.id                                         # ID vor dem Schließen auslesen (danach ist das Objekt detached)
         session.close()
         return start_session(user_id, {"status": "success", "redirect": "/welcome"})
 
-    # Fall 2: E-Mail-Code (2FA) -> Direkt Code versenden und 2FA-Maske oeffnen
+    # Fall 2: E-Mail-Code (2FA) -> Direkt Code versenden und 2FA-Maske öffnen
     elif auth_method == "email_otp":
         otp_code = f"{secrets.randbelow(900000) + 100000}"
         expires_at = now + timedelta(minutes=10)
@@ -456,7 +456,7 @@ async def login(request: Request):
     if user.auth_method == "password":
         user.last_login_at = now
         session.commit()
-        user_id = user.id                                         # ID vor dem Schliessen auslesen
+        user_id = user.id                                         # ID vor dem Schließen auslesen
         session.close()
         return start_session(user_id, {"status": "success", "redirect": "/welcome"})
 
@@ -487,7 +487,7 @@ async def login(request: Request):
         }, status_code=200)
 
 
-@app.post("/api/verify-2fa")                                                                   # Login (Schritt 2: 2FA-Code pruefen)
+@app.post("/api/verify-2fa")                                                                   # Login (Schritt 2: 2FA-Code prüfen)
 async def verify_2fa(request: Request):
     allowed, reason = is_login_allowed_now()
     if not allowed:
@@ -532,7 +532,7 @@ async def verify_2fa(request: Request):
     # 2FA erfolgreich -> Session setzen
     user.last_login_at = now
     session.commit()
-    user_id = user.id                                             # ID vor dem Schliessen auslesen
+    user_id = user.id                                             # ID vor dem Schließen auslesen
     session.close()
     return start_session(user_id, {"message": "Login erfolgreich.", "redirect": "/welcome"})
 

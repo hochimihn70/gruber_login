@@ -44,7 +44,7 @@ const devCodeValue = document.getElementById('dev-code-value');
 const devCodeBoxReset = document.getElementById('dev-code-box-reset');
 const devCodeValueReset = document.getElementById('dev-code-value-reset');
 
-// Temporaere Session-Daten fuer 2FA und Reset
+// Temporäre Session-Daten für 2FA und Reset
 let pendingEmail = '';
 let resetEmail = '';
 
@@ -53,7 +53,7 @@ let resetEmail = '';
 // Hilfsfunktionen
 // ------------------------------------------------------------------------------------------
 
-// Zeigt Statusmeldungen (Gruen fuer OK, Rot fuer Fehler)
+// Zeigt Statusmeldungen (Grün für OK, Rot für Fehler)
 function showMessage(text, isError) {
   statusText.textContent = text;
   statusText.className = isError ? 'error' : 'ok';
@@ -93,15 +93,15 @@ function showDevCode(code, isReset) {
 }
 
 
-// Blendet die Dev-Modus-Boxen wieder aus (z. B. wenn der Nutzer zurueckgeht)
+// Blendet die Dev-Modus-Boxen wieder aus (z. B. wenn der Nutzer zurückgeht)
 function hideDevCode() {
   if (devCodeBox) devCodeBox.style.display = 'none';
   if (devCodeBoxReset) devCodeBoxReset.style.display = 'none';
 }
 
 
-// Clientseitige Verschluesselung (SHA-256 via Web Crypto API)
-// Das Klartextpasswort verlaesst NIEMALS den Browser!
+// Clientseitige Verschlüsselung (SHA-256 via Web Crypto API)
+// Das Klartextpasswort verlässt NIEMALS den Browser!
 async function hashPassword(plainPassword) {
   const encoder = new TextEncoder();
   const data = encoder.encode(plainPassword);
@@ -111,7 +111,7 @@ async function hashPassword(plainPassword) {
 }
 
 
-// Hilfsfunktion fuer API-Anfragen
+// Hilfsfunktion für API-Anfragen
 async function postJSON(url, payload) {
   const response = await fetch(url, {
     method: 'POST',
@@ -184,10 +184,10 @@ async function onLogin(event) {
 // ------------------------------------------------------------------------------------------
 // 2. REGISTRIEREN (zwei Schritte)
 //    Schritt 1: E-Mail + Passwort
-//    Schritt 2: Sicherheitsstufe waehlen (nur Passwort / E-Mail-2FA / TOTP)
+//    Schritt 2: Sicherheitsstufe wählen (nur Passwort / E-Mail-2FA / TOTP)
 // ------------------------------------------------------------------------------------------
 
-// Setzt die Registrierung auf Schritt 1 zurueck (leere Felder, 2FA-Auswahl unsichtbar)
+// Setzt die Registrierung auf Schritt 1 zurück (leere Felder, 2FA-Auswahl unsichtbar)
 function resetRegisterForm() {
   registerForm.reset();
   registerStep2.style.display = 'none';
@@ -195,7 +195,7 @@ function resetRegisterForm() {
 }
 
 
-// Prueft Schritt 1 und blendet die Auswahl der Sicherheitsstufe ein
+// Prüft Schritt 1 und blendet die Auswahl der Sicherheitsstufe ein
 function showRegisterStep2() {
   const email = registerForm.email.value.trim().toLowerCase();
   const password = registerForm.password.value;
@@ -293,7 +293,7 @@ async function onRegister(event) {
 
 
 // ------------------------------------------------------------------------------------------
-// 3. 2FA-CODE BESTAETIGEN
+// 3. 2FA-CODE BESTÄTIGEN
 // ------------------------------------------------------------------------------------------
 async function onVerify2FA(event) {
   event.preventDefault();
@@ -318,7 +318,7 @@ async function onVerify2FA(event) {
 
 
 // ------------------------------------------------------------------------------------------
-// 4. PASSWORT VERGESSEN & ZURUECKSETZEN
+// 4. PASSWORT VERGESSEN & ZURÜCKSETZEN
 // ------------------------------------------------------------------------------------------
 async function onRequestReset(event) {
   event.preventDefault();
