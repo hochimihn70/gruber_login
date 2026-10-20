@@ -95,15 +95,14 @@ docker compose up -d --force-recreate web
 ### E-Mail-Versand
 
 - **Mit SMTP:** `SMTP_*` in der `.env` setzen. Kostenlose Empfehlung: [Resend](https://resend.com) (3.000 Mails/Monat gratis, DNS-Einbindung in Cloudflare möglich).
-- **Dev-Modus ohne SMTP:** Codes werden **immer** zusätzlich in die Logs geschrieben. Ist kein SMTP-Server konfiguriert (fehlender `SMTP_HOST`, `SMTP_PASSWORD` oder `SMTP_FROM`), wird **keine** E-Mail verschickt - der Code wird dann **direkt im Browser angezeigt** und automatisch ins Eingabefeld eingetragen. Die Oberflaeche sagt das auch, statt faelschlich "Code wurde gesendet" zu behaupten.
+- **Dev-Modus ohne SMTP:** Codes werden **immer** zusätzlich in die Logs geschrieben. Ist kein SMTP-Server konfiguriert (fehlender `SMTP_HOST`, `SMTP_PASSWORD` oder `SMTP_FROM`), wird **keine** E-Mail verschickt – der Code wird dann **direkt im Browser angezeigt** und automatisch ins Eingabefeld eingetragen. Die Oberfläche sagt das auch, statt fälschlich „Code wurde gesendet" zu behaupten.
   ```bash
   docker compose logs -f web
   ```
   Dort erscheint ein Block wie `[DEIN VERIFIZIERUNGSCODE] für user@example.com: >>> 123456 <<<`.
+- **Status prüfen:** `curl http://localhost:5000/api/health` zeigt, ob der E-Mail-Versand konfiguriert ist und welche Variablen noch fehlen.
 
 > Achtung: Da Codes im Klartext in den Logs stehen, ist das Setup in dieser Form für Entwicklung und Demos gedacht, nicht für den Produktivbetrieb.
-
-- **Status prüfen:** `curl http://localhost:5000/api/health` zeigt, ob der E-Mail-Versand konfiguriert ist und welche Variablen noch fehlen.
 
 ### E-Mail mit Resend einrichten
 
