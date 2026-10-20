@@ -169,6 +169,37 @@ Passwort (Klartext, im Browser)
 
 Der Klartext erreicht den Server nie. Aus der Datenbank lässt sich das Passwort nicht zurückrechnen. Der bcrypt-Hash hat zusätzlich ein Salt pro User, gleiche Passwörter erzeugen also unterschiedliche Hashes.
 
+### 4. Brute-Force wird gebremst
+
+Ein 6-stelliger 2FA-Code hat nur 900.000 Kombinationen – ohne Bremse wäre er in den 10 Minuten Gültigkeit durchprobierbar. Deshalb gilt:
+
+| Vorgang | Regel |
+|---|---|
+| 2FA-Code | nach **5 Fehlversuchen** wird der Code ungültig (HTTP 429) |
+| Vergleich | mit `secrets.compare_digest` (konstante Laufzeit) |
+| Passwort | bcrypt mit Cost-Faktor 12 – rund 200 ms pro Versuch |
+
+Für das Passwort ist keine eigene Bremse nötig: Der Server rechnet einen **Dummy-bcrypt-Vergleich** auch dann, wenn die E-Mail unbekannt ist. Sonst wäre die Antwortzeit ein Rauschanzeiger:
+
+```
+vorher:   unbekannte E-Mail  →   6 ms     bekannte E-Mail  →  230 ms   (97 % Unterschied!)
+nachher:  unbekannte E-Mail  → 212 ms     bekannte E-Mail  →  212 ms   (0 % Unterschied)
+```
+
+So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
+
+### 5. Weitere Schutzmassnahmen
+
+| Massnahme | Umsetzung |
+|---|---|
+| Session-Token in der DB | nur als SHA-256-Hash – ein DB-Leak reicht nicht, um die Session zu übernehmen |
+| E-Mail-Prüfung | auch serverseitig (nicht nur im Browser) |
+| Sessions beim Passwort-Reset | alle bestehenden Sessions des Users werden beendet |
+| Sicherheits-Header | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy` |
+| CSP | `script-src 'self'` – kein Inline-JavaScript. Deshalb liegt der Code der Willkommensseite in `static/welcome.js` statt im HTML |
+
+> **Hinweis zu Cloudflare:** Der Tunnel injiziert ein eigenes Script in die HTML-Ausgabe (Bot-Erkennung). Die strikte CSP blockiert es – die App ist davon nicht betroffen. Falls es doch nötig wird: `script-src 'self' 'unsafe-inline'`.
+
 ## Ressourcenverbrauch
 
 > **Richtwerte, nicht gemessen** – typische Erfahrungswerte für diese Images im Leerlauf bzw. bei wenigen Nutzern. Auf dem Zielsystem lässt sich der echte Verbrauch mit `docker stats` prüfen.
@@ -256,3 +287,5 @@ Die App liest die `.env` **nicht selbst** – sie kennt nur `os.environ`. Alle S
 | POST | `/api/forgot-password` | Reset-Code anfordern |
 | POST | `/api/reset-password` | Neues Passwort mit Reset-Code setzen |
 | POST | `/api/logout` | Abmelden |
+
+Statuscodes der Fehlerfälle: `400` (Eingabe falsch), `401` (E-Mail/Passwort falsch oder Konto existiert schon), `403` (Login gesperrt), `404` (unbekannt), `429` (zu viele 2FA-Versuche), `500` (Serverfehler).
