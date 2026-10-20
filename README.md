@@ -4,7 +4,7 @@ Kleine Login-Anwendung mit drei wählbaren Anmeldemodi, Session-Schutz, Passwort
 
 ## Funktionen
 
-- **Drei Login-Modi** (bei der Registrierung wählbar):
+- **Drei Login-Modi** (bei der Registrierung im zweiten Schritt wählbar):
   - `password` – nur Passwort
   - `email_otp` – Passwort + 6-stelliger Code per E-Mail (10 Minuten gültig)
   - `totp` – Passwort + Authenticator-App (QR-Code, RFC 6238, z. B. Google Authenticator, Aegis, 2FAS)
@@ -38,10 +38,10 @@ Beim ersten Start legt die App die Tabellen `users`, `sessions` und `email_otps`
 
 ### Ausprobieren
 
-1. http://localhost:5000 öffnen und registrieren – E-Mail, Passwort und Login-Modus wählen.
+1. http://localhost:5000 öffnen und registrieren – zuerst E-Mail und Passwort, dann im zweiten Schritt entscheiden, ob das Konto zusätzlich abgesichert werden soll.
 2. Je nach Modus:
    - **Passwort:** du wirst sofort eingeloggt und landest auf `/welcome`.
-   - **E-Mail-Code:** Code eingeben. Ohne SMTP-Konfiguration steht er in den Logs (siehe unten).
+   - **E-Mail-Code:** Code eingeben. Ohne SMTP-Konfiguration steht er in den Logs **und wird direkt im Browser angezeigt** (siehe unten).
    - **Authenticator:** QR-Code mit der App scannen, dann den angezeigten 6-stelligen Code eingeben.
 3. Beim nächsten Login wird je nach Modus der zweite Faktor abgefragt.
 
@@ -76,7 +76,13 @@ Die App ist dann unter `https://<deine-domain>` erreichbar (lokal weiterhin unte
 | `LOGIN_ALLOWED_START_HOUR` | Erste erlaubte Stunde (0–23) | `6` |
 | `LOGIN_ALLOWED_END_HOUR` | Erste *nicht mehr* erlaubte Stunde (0–23) | `22` |
 
-Nach Änderungen an der `.env` die Container neu erzeugen: `docker compose up -d`.
+Nach Änderungen an der `.env` die Container **neu erstellen**:
+
+```bash
+docker compose up -d --force-recreate web
+```
+
+> `docker compose restart` reicht **nicht** – Umgebungsvariablen werden nur beim Erstellen des Containers gesetzt. Ein einfaches `docker compose up -d` genügt nur, wenn Compose den Konfigurationsunterschied selbst erkennt.
 
 > **Hinweis zur Zeitbeschränkung:** `docker-compose.yml` reicht die `LOGIN_*`-Variablen aktuell nicht an den `web`-Container durch. Zum Aktivieren müssen im Service `web` unter `environment:` diese Zeilen ergänzt werden:
 > ```yaml
@@ -89,13 +95,46 @@ Nach Änderungen an der `.env` die Container neu erzeugen: `docker compose up -d
 ### E-Mail-Versand
 
 - **Mit SMTP:** `SMTP_*` in der `.env` setzen. Kostenlose Empfehlung: [Resend](https://resend.com) (3.000 Mails/Monat gratis, DNS-Einbindung in Cloudflare möglich).
-- **Dev-Modus ohne SMTP:** Codes werden **immer** zusätzlich in die Logs geschrieben und bei leerem `SMTP_HOST` nur dort ausgegeben:
+- **Dev-Modus ohne SMTP:** Codes werden **immer** zusätzlich in die Logs geschrieben. Ist kein SMTP-Server konfiguriert (fehlender `SMTP_HOST`, `SMTP_PASSWORD` oder `SMTP_FROM`), wird **keine** E-Mail verschickt - der Code wird dann **direkt im Browser angezeigt** und automatisch ins Eingabefeld eingetragen. Die Oberflaeche sagt das auch, statt faelschlich "Code wurde gesendet" zu behaupten.
   ```bash
   docker compose logs -f web
   ```
   Dort erscheint ein Block wie `[DEIN VERIFIZIERUNGSCODE] für user@example.com: >>> 123456 <<<`.
 
 > Achtung: Da Codes im Klartext in den Logs stehen, ist das Setup in dieser Form für Entwicklung und Demos gedacht, nicht für den Produktivbetrieb.
+
+- **Status prüfen:** `curl http://localhost:5000/api/health` zeigt, ob der E-Mail-Versand konfiguriert ist und welche Variablen noch fehlen.
+
+### E-Mail mit Resend einrichten
+
+1. **API-Key anlegen:** [resend.com → API Keys](https://resend.com/dashboard/api-keys) → *Create API Key* (beginnt mit `re_`).
+2. **Domain verifizieren:** [resend.com → Domains](https://resend.com/dashboard/domains) → z. B. `smoothingo.com` hinzufügen.
+3. **DNS-Records in Cloudflare anlegen** (Werte stehen im Resend-Dashboard unter *Records*):
+
+   | Typ | Name | Ziel | Proxy |
+   |---|---|---|---|
+   | `MX` | `send` | Wert aus Resend (Priority 10) | DNS only |
+   | `TXT` | `send` | `"v=spf1 include:amazonses.com ~all"` | DNS only |
+   | `TXT` | `resend._domainkey` | DKIM-Wert von Resend | **DNS only!** |
+
+   > Nur den Subdomain-Namen eintragen (nicht die volle Domain) und **kein Proxy-Orange-Cloud** – sonst schlägt die Verifizierung fehl.
+4. **In der `.env` eintragen:**
+
+   ```bash
+   SMTP_HOST=smtp.resend.com
+   SMTP_PORT=587          # 587 = STARTTLS, 465 = implizites SSL (beides unterstützt)
+   SMTP_USER=resend       # fest "resend", nicht die eigene E-Mail-Adresse
+   SMTP_PASSWORD=re_DEIN_API_KEY
+   SMTP_FROM=noreply@smoothingo.com   # muss auf einer verifizierten Domain liegen
+   ```
+
+5. **Container neu erstellen**, damit die Variablen übernommen werden:
+
+   ```bash
+   docker compose up -d --force-recreate web
+   ```
+
+   Der Start-Log bestätigt den Zustand: `[SMTP] E-Mail-Versand: AKTIV (Host: smtp.resend.com, …)`.
 
 ## Ressourcenverbrauch
 
@@ -146,7 +185,7 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 |---|---|
 | `cloudflared` startet ständig neu | `TUNNEL_TOKEN` fehlt oder ist ungültig – Token eintragen oder nur `db web` starten. |
 | `web` startet neu / Datenbankfehler | MySQL ist noch nicht bereit; kurz warten und `docker compose logs web` prüfen. Bei geänderten DB-Zugangsdaten das Volume mit `docker compose down -v` zurücksetzen. |
-| Kein E-Mail-Code erhalten | Ohne `SMTP_HOST` steht der Code nur in `docker compose logs web`. Mit SMTP: Zugangsdaten, Port und Absenderdomain prüfen (Fehler stehen als `Mail-Fehler: …` in den Logs). |
+| Kein E-Mail-Code erhalten | Ohne SMTP-Konfiguration wird der Code **im Browser angezeigt** und zusätzlich ins Log geschrieben (`docker compose logs web`). Mit SMTP: Zugangsdaten, Port und Absenderdomain prüfen (Fehler stehen als `Mail-Fehler: …` in den Logs). `curl localhost:5000/api/health` zeigt, ob SMTP überhaupt konfiguriert ist. |
 | Authenticator-Code wird abgelehnt | Uhrzeit von Server und Handy synchronisieren (Toleranz: ±30 Sekunden). |
 | Login meldet „zu dieser Uhrzeit gesperrt" | `LOGIN_RESTRICTION_ENABLED=false` setzen oder die erlaubten Stunden anpassen. |
 | Änderungen an `static/app.js` greifen nicht | Browser-Cache leeren (Strg+Shift+R); die Script-URL enthält eine Versionsnummer in `templates/index.html`. |
@@ -158,12 +197,24 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 - **Passwörter:** SHA-256 im Browser, anschließend bcrypt auf dem Server – das Klartext-Passwort erreicht den Server nie und kann aus der Datenbank nicht zurückgerechnet werden.
 - **Cloudflared** stellt die Verbindung über den Cloudflare Tunnel her (keine offenen Ports nötig).
 
+### Konfigurations-Ebenen
+
+| Ebene | Datei | Aufgabe |
+|---|---|---|
+| Defaults | `docker-compose.yml` | Fallback-Werte via `${VAR:-default}` |
+| Secrets | `.env` (gitignored) | überschreibt die Defaults |
+| Vorlage | `.env.example` | reine Dokumentation, wirkt **nicht** zur Laufzeit |
+| Laufzeit | Container-ENV | wird von `os.environ` in `app.py` gelesen |
+
+Die App liest die `.env` **nicht selbst** – sie kennt nur `os.environ`. Alle SMTP-Werte stehen deshalb ausschließlich in der `.env`, im Code ist nichts hart verdrahtet.
+
 ### API-Endpunkte
 
 | Methode | Pfad | Zweck |
 |---|---|---|
 | GET | `/` | Login-/Registrierungsseite |
 | GET | `/welcome` | Geschützte Willkommensseite |
+| GET | `/api/health` | Status: Datenbank, SMTP-Konfiguration, fehlende Variablen |
 | GET | `/api/me` | Daten des eingeloggten Benutzers |
 | POST | `/api/register` | Registrieren (oder Methode/Passwort eines bestehenden Benutzers aktualisieren) |
 | POST | `/api/login` | Login Schritt 1 (Passwort) |

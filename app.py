@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles                                     
 import pyotp                                                                                   # Fuer TOTP Authenticator (RFC 6238)
 import qrcode                                                                                  # Fuer QR-Codes
 import qrcode.image.svg                                                                        # SVG-Generator (benoetigt kein Pillow)
-from sqlalchemy import DateTime, Integer, String, create_engine                                 # SQLAlchemy Spaltentypen
+from sqlalchemy import DateTime, Integer, String, create_engine, text                         # SQLAlchemy Spaltentypen
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column                     # SQLAlchemy ORM
 
 
@@ -102,12 +102,47 @@ def generate_totp_qr_svg(email: str, secret: str) -> str:                       
     return buf.getvalue().decode("utf-8")
 
 
-def send_otp_email(to_email: str, otp_code: str, purpose: str = "2fa"):                       # Versendet E-Mails via SMTP
+def smtp_config() -> dict:                                                                    # SMTP-Konfiguration aus der Umgebung
+    """Liest die SMTP-Konfiguration aus der Umgebung.
+
+    Quelle ist ausschliesslich die .env-Datei (via docker-compose -> Container-ENV).
+    Im Code ist bewusst NICHTS hart verdrahtet - alle Werte kommen von aussen.
+    """
+    return {
+        "host": os.environ.get("SMTP_HOST", "").strip(),
+        "port": int(os.environ.get("SMTP_PORT", "587") or 587),
+        "user": os.environ.get("SMTP_USER", "").strip(),
+        "password": os.environ.get("SMTP_PASSWORD", "").strip(),
+        "from": os.environ.get("SMTP_FROM", "").strip(),
+    }
+
+
+def smtp_missing_keys() -> list[str]:                                                         # Welche SMTP-Variablen fehlen noch?
+    cfg = smtp_config()
+    needed = [("SMTP_HOST", cfg["host"]), ("SMTP_PASSWORD", cfg["password"]), ("SMTP_FROM", cfg["from"])]
+    return [key for key, value in needed if not value]
+
+
+def smtp_is_configured() -> bool:                                                              # Ist der E-Mail-Versand einsatzbereit?
+    """SMTP gilt erst als konfiguriert, wenn Host, Passwort UND Absender gesetzt sind.
+
+    So laeuft die App im Dev-Modus weiter, solange z. B. der API-Key noch fehlt -
+    statt mit einem halb konfigurierten Server ins Zeitouts zu laufen.
+    """
+    return not smtp_missing_keys()
+
+
+def send_otp_email(to_email: str, otp_code: str, purpose: str = "2fa") -> bool:                # Versendet E-Mails via SMTP
+    """Schickt den Bestätigungscode per E-Mail.
+
+    Rueckgabe: True  = E-Mail erfolgreich verschickt
+               False = nicht verschickt (kein SMTP konfiguriert ODER Versandfehler)
+    """
     smtp_host = os.environ.get("SMTP_HOST", "").strip()
-    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_port = int(os.environ.get("SMTP_PORT", "587") or 587)
     smtp_user = os.environ.get("SMTP_USER", "").strip()
     smtp_password = os.environ.get("SMTP_PASSWORD", "").strip()
-    smtp_from = os.environ.get("SMTP_FROM", smtp_user or "noreply@smoothingo.com").strip()
+    smtp_from = os.environ.get("SMTP_FROM", "").strip()
 
     title = "Dein Verifizierungscode" if purpose == "2fa" else "Passwort zurücksetzen"
 
@@ -115,11 +150,11 @@ def send_otp_email(to_email: str, otp_code: str, purpose: str = "2fa"):         
     print(f"[{title.upper()}] für {to_email}: >>> {otp_code} <<<", flush=True)
     print(f"=======================================================\n", flush=True)
 
-    if not smtp_host:                                                                          # Wenn kein SMTP eingetragen ist, fertig
-        return
+    if not smtp_host:                                                                          # Dev-Modus: nur Log, keine E-Mail
+        return False
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"{title}: {otp_code}"
+    msg["Subject"] = title                                                                      # Code NICHT im Betreff (sonst im Sperrbildschirm sichtbar)
     msg["From"] = smtp_from
     msg["To"] = to_email
 
@@ -137,17 +172,57 @@ def send_otp_email(to_email: str, otp_code: str, purpose: str = "2fa"):         
     msg.attach(MIMEText(text_content, "plain"))
     msg.attach(MIMEText(html_content, "html"))
 
-    if smtp_port == 465:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
-            if smtp_user and smtp_password:
-                server.login(smtp_user, smtp_password)
-            server.sendmail(smtp_from, [to_email], msg.as_string())
+    try:
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
+                if smtp_user and smtp_password:
+                    server.login(smtp_user, smtp_password)
+                server.sendmail(smtp_from, [to_email], msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                server.starttls()
+                if smtp_user and smtp_password:
+                    server.login(smtp_user, smtp_password)
+                server.sendmail(smtp_from, [to_email], msg.as_string())
+    except Exception as e:
+        print(f"Mail-Fehler: {e}", flush=True)
+        return False
+
+    return True
+
+
+# Status beim Start ausgeben - so sieht man sofort, ob der E-Mail-Versand wirklich aktiv ist
+_cfg = smtp_config()
+if smtp_is_configured():
+    print(f"[SMTP] E-Mail-Versand: AKTIV (Host: {_cfg['host']}, Port: {_cfg['port']}, "
+          f"User: {_cfg['user']}, From: {_cfg['from']})", flush=True)
+else:
+    print(f"[SMTP] E-Mail-Versand: DEAKTIVIERT -> Dev-Modus! "
+          f"Fehlende Variablen in der .env: {', '.join(smtp_missing_keys())}", flush=True)
+    print("       Die Codes stehen nur im Log und werden direkt im Browser angezeigt.", flush=True)
+
+
+def otp_response(email: str, otp_code: str, sent: bool) -> dict:                              # Antwort fuer den 2FA-Schritt
+    """Baut die Antwort, die nach dem Anfordern eines E-Mail-Codes zurueckgegeben wird.
+
+    Im Dev-Modus (kein SMTP-Server konfiguriert) wird der Code direkt mitgeschickt und
+    im Browser angezeigt - so bleibt der Login auch ohne Mailserver demonstrierbar
+    und die UI behauptet nicht faelschlich, es sei eine E-Mail verschickt worden.
+    """
+    if sent:
+        message = f"Bestätigungscode wurde an {email} gesendet!"
     else:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-            server.starttls()
-            if smtp_user and smtp_password:
-                server.login(smtp_user, smtp_password)
-            server.sendmail(smtp_from, [to_email], msg.as_string())
+        message = f"Kein SMTP-Server konfiguriert (Dev-Modus) – dein Bestätigungscode lautet: {otp_code}"
+    response = {
+        "status": "2fa_required",
+        "method": "email_otp",
+        "email": email,
+        "message": message,
+    }
+    if not sent:
+        response["dev_code"] = otp_code
+        response["dev_mode"] = True
+    return response
 
 
 @app.get("/")
@@ -175,6 +250,30 @@ def show_welcome_page(request: Request):
         return response
 
     return FileResponse("templates/welcome.html")
+
+
+@app.get("/api/health")                                                                           # Systemstatus (Debug-Hilfe)
+async def health():
+    """Kurzer Status: Datenbank erreichbar? Ist der E-Mail-Versand konfiguriert?"""
+    db_ok = True
+    try:
+        s = Session(engine)
+        s.execute(text("SELECT 1"))
+        s.close()
+    except Exception:
+        db_ok = False
+
+    cfg = smtp_config()
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "database": "ok" if db_ok else "fehler",
+        "smtp_configured": smtp_is_configured(),
+        "smtp_host": cfg["host"],
+        "smtp_port": cfg["port"],
+        "smtp_from": cfg["from"],
+        "smtp_missing": smtp_missing_keys(),
+        "dev_mode": not smtp_is_configured(),
+    }
 
 
 @app.get("/api/me")                                                                            # Liefert Benutzerdaten fuer /welcome
@@ -271,17 +370,11 @@ async def register(request: Request):
         session.commit()
         session.close()
 
-        try:
-            send_otp_email(email, otp_code, "2fa")
-        except Exception as e:
-            print(f"Mail-Fehler: {e}", flush=True)
+        sent = send_otp_email(email, otp_code, "2fa")
+        if smtp_is_configured() and not sent:
+            return JSONResponse({"error": "E-Mail konnte nicht gesendet werden."}, status_code=500)
 
-        return JSONResponse({
-            "status": "2fa_required",
-            "method": "email_otp",
-            "email": email,
-            "message": f"Bestätigungscode wurde an {email} gesendet!"
-        }, status_code=200)
+        return JSONResponse(otp_response(email, otp_code, sent), status_code=200)
 
     # Fall 3: Authenticator-App -> Direkt QR-Code anzeigen
     elif auth_method == "totp":
@@ -339,18 +432,11 @@ async def login(request: Request):
         session.commit()
         session.close()
 
-        try:
-            send_otp_email(email, otp_code, "2fa")
-        except Exception as e:
-            print(f"Mail-Fehler: {e}", flush=True)
+        sent = send_otp_email(email, otp_code, "2fa")
+        if smtp_is_configured() and not sent:
             return JSONResponse({"error": "E-Mail konnte nicht gesendet werden."}, status_code=500)
 
-        return JSONResponse({
-            "status": "2fa_required",
-            "method": "email_otp",
-            "email": email,
-            "message": f"6-stelliger Bestätigungscode an {email} gesendet."
-        }, status_code=200)
+        return JSONResponse(otp_response(email, otp_code, sent), status_code=200)
 
     # Variante 3: Authenticator-App (TOTP)
     elif user.auth_method == "totp":
@@ -439,12 +525,19 @@ async def forgot_password(request: Request):
     session.commit()
     session.close()
 
-    try:
-        send_otp_email(email, code, "reset")
-    except Exception as e:
-        print(f"Mail-Fehler: {e}", flush=True)
+    sent = send_otp_email(email, code, "reset")
 
-    return JSONResponse({"message": "Falls die E-Mail registriert ist, wurde ein Reset-Code gesendet."}, status_code=200)
+    # Anti-Enumeration: Die Antwort ist generisch, damit niemand herausfinden kann,
+    # welche E-Mail-Adressen registriert sind. Nur im Dev-Modus wird der Code mitgegeben,
+    # damit der Reset ohne Mailserver demonstrierbar bleibt.
+    generic = {"message": "Falls die E-Mail registriert ist, wurde ein Reset-Code gesendet."}
+    if not sent:
+        generic = {
+            "message": f"Kein SMTP-Server konfiguriert (Dev-Modus) – dein Reset-Code lautet: {code}",
+            "dev_code": code,
+            "dev_mode": True,
+        }
+    return JSONResponse(generic, status_code=200)
 
 
 @app.post("/api/reset-password")                                                               # Bonus: Neues Passwort mit Reset-Code setzen

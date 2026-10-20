@@ -1,25 +1,197 @@
-body { max-width: 520px; margin: 40px auto; padding: 0 20px; font: 16px Arial, sans-serif; color: #111; line-height: 1.5; }
-h1 { margin-bottom: 8px; }
-h2 { margin-top: 28px; margin-bottom: 12px; font-size: 20px; }
-form { display: grid; gap: 10px; margin-bottom: 16px; }
-input, button { padding: 10px 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; width: 100%; }
-button { cursor: pointer; background: #1f2937; color: #fff; border: none; font-weight: bold; }
-button:hover { background: #374151; }
-button.secondary { background: #f3f4f6; color: #1f2937; border: 1px solid #d1d5db; font-weight: normal; margin-top: 4px; }
-button.secondary:hover { background: #e5e7eb; }
-fieldset.auth-options { border: 1px solid #d1d5db; border-radius: 4px; padding: 10px 14px; margin: 4px 0 8px 0; }
-fieldset.auth-options legend { font-size: 14px; font-weight: bold; color: #374151; padding: 0 6px; }
-fieldset.auth-options label { display: block; margin: 8px 0; font-size: 15px; cursor: pointer; }
-fieldset.auth-options input[type="radio"] { width: auto; margin-right: 8px; vertical-align: middle; }
-#totp-qr-container { display: flex; justify-content: center; margin: 20px 0; }
-#totp-qr-container svg { max-width: 220px; height: auto; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; }
-#totp-secret-key { font-family: monospace; font-size: 18px; letter-spacing: 2px; color: #111; background: #f3f4f6; padding: 4px 8px; border-radius: 4px; word-break: break-all; }
-.user-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px; margin: 20px 0; }
-.user-card h2 { margin-top: 0; }
-.user-card p { margin: 8px 0; }
-.small { font-size: 14px; color: #4b5563; }
-a { color: #111; text-decoration: underline; }
-a:hover { color: #4b5563; }
-#status { min-height: 24px; font-weight: bold; margin-top: 16px; }
+/* ============================================================
+   Login & Auth Demo - Styling
+   ============================================================ */
+
+/* ---------- Grundlagen ---------- */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 16px;
+  background: #f3f4f6;
+  color: #111827;
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  width: 100%;
+  max-width: 420px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 32px 28px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 28px rgba(16, 24, 40, .07);
+}
+
+h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -.02em; }
+h2 { margin: 0 0 18px; font-size: 20px; letter-spacing: -.01em; }
+h3 { margin: 26px 0 6px; font-size: 16px; }
+
+/* ---------- Formulare ---------- */
+form { display: grid; gap: 8px; }
+
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-top: 10px;
+}
+
+input[type="email"],
+input[type="password"],
+input[type="text"] {
+  width: 100%;
+  padding: 11px 13px;
+  font-size: 15px;
+  font-family: inherit;
+  color: #111827;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 9px;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+input::placeholder { color: #9ca3af; }
+
+input:focus {
+  outline: none;
+  border-color: #111827;
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, .09);
+}
+
+/* ---------- Buttons ---------- */
+button { font-family: inherit; cursor: pointer; }
+
+.btn-primary {
+  margin-top: 18px;
+  padding: 12px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #111827;
+  border: none;
+  border-radius: 9px;
+  transition: background .15s;
+}
+.btn-primary:hover { background: #374151; }
+
+.btn-secondary {
+  padding: 11px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #111827;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 9px;
+  transition: background .15s, border-color .15s;
+}
+.btn-secondary:hover { background: #f9fafb; border-color: #9ca3af; }
+
+.btn-block { display: block; width: 100%; margin-top: 10px; }
+
+.btn-row { display: flex; gap: 10px; margin-top: 18px; }
+.btn-row .btn-primary { margin-top: 0; flex: 1; }
+.btn-row .btn-secondary { margin-top: 0; }
+
+/* Kleiner, unauffaelliger Button fuer "Konto erstellen" */
+#btn-show-register {
+  margin-top: 0;
+  padding: 9px 16px;
+  font-size: 13px;
+  color: #4b5563;
+  background: transparent;
+  border: 1px dashed #d1d5db;
+}
+#btn-show-register:hover { background: #f9fafb; border-color: #9ca3af; color: #111827; }
+
+.linklike {
+  padding: 0;
+  font-size: 14px;
+  color: #4b5563;
+  background: none;
+  border: none;
+  text-decoration: underline;
+}
+.linklike:hover { color: #111827; }
+
+/* ---------- Trenner ---------- */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 4px;
+  color: #9ca3af;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.divider::before, .divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+
+/* ---------- Auswahl-Optionen (2FA) ---------- */
+.option-list { display: grid; gap: 8px; margin-top: 14px; }
+
+.option {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.option:hover { border-color: #9ca3af; background: #f9fafb; }
+.option:has(input:checked) { border-color: #111827; background: #f9fafb; }
+
+.option input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  flex-shrink: 0;
+  accent-color: #111827;
+}
+
+.option span { display: block; }
+.option strong { display: block; font-size: 14px; font-weight: 600; color: #111827; }
+.option small { display: block; font-size: 12.5px; font-weight: 400; color: #6b7280; margin-top: 2px; }
+
+/* ---------- Statusmeldungen ---------- */
+#status { min-height: 22px; margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+#status:empty { margin-bottom: 0; }
 .ok { color: #15803d; }
 .error { color: #b91c1c; }
+
+.small { font-size: 13px; color: #6b7280; }
+.center { text-align: center; margin: 14px 0 0; }
+a { color: #111827; text-decoration: underline; }
+a:hover { color: #4b5563; }
+
+/* ---------- TOTP-Setup ---------- */
+#totp-qr-container { display: flex; justify-content: center; margin: 20px 0; }
+#totp-qr-container svg { max-width: 220px; height: auto; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; }
+#totp-secret-key { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 16px; letter-spacing: 2px; color: #111827; background: #f3f4f6; padding: 6px 10px; border-radius: 6px; word-break: break-all; display: inline-block; }
+
+/* ---------- Willkommensseite ---------- */
+.user-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin: 22px 0; }
+.user-card h2 { margin-top: 0; font-size: 16px; }
+.user-card p { margin: 9px 0; font-size: 14px; }
+.user-card strong { color: #374151; }
+
+/* ---------- Dev-Modus: Code direkt im Browser ---------- */
+.dev-code-box { background: #fffbeb; border: 1px solid #fcd34d; border-left: 4px solid #f59e0b; border-radius: 10px; padding: 14px 16px; margin: 16px 0; }
+.dev-code-title { font-weight: 600; color: #92400e; margin: 0 0 6px; font-size: 14px; }
+.dev-code-label { margin: 4px 0; font-size: 13px; color: #78350f; }
+.dev-code-value { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 28px; font-weight: 700; letter-spacing: 8px; color: #111827; background: #fff; border: 1px dashed #f59e0b; border-radius: 8px; padding: 12px; margin: 10px 0; text-align: center; }
+.dev-code-hint { margin: 6px 0 0; font-size: 12.5px; color: #92400e; }

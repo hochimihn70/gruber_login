@@ -4,103 +4,173 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Login & Auth Demo</title>
-  <link rel="stylesheet" href="/static/style.css?v=4">
+  <link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
   <main>
-    <h1>Login</h1>
+    <h1 id="page-title">Login</h1>
     <!-- Statusmeldung direkt oben sichtbar -->
     <p id="status" role="alert"></p>
 
-    <!-- 1. Hauptansicht: Anmelden und Registrieren -->
+    <!-- ============================================================
+         1. ANMELDEN - ganz normale Login-Maske
+         ============================================================ -->
     <div id="main-view">
-      <section>
-        <h2>Anmelden</h2>
-        <form id="login-form" novalidate>
-          <input name="email" type="email" placeholder="E-Mail" required>
-          <input name="password" type="password" placeholder="Passwort" required>
-          <button type="submit">Anmelden</button>
-        </form>
-        <p class="small"><a href="#" id="link-forgot-pw">Passwort vergessen?</a></p>
-      </section>
+      <form id="login-form" novalidate>
+        <label for="login-email">E-Mail</label>
+        <input id="login-email" name="email" type="email" placeholder="name@beispiel.de" required autocomplete="email">
 
-      <section>
-        <h2>Registrieren</h2>
-        <form id="register-form" novalidate>
-          <input name="email" type="email" placeholder="E-Mail" required>
-          <input name="password" type="password" placeholder="Passwort (min. 8 Zeichen)" required>
+        <label for="login-password">Passwort</label>
+        <input id="login-password" name="password" type="password" placeholder="Passwort" required autocomplete="current-password">
 
-          <fieldset class="auth-options">
-            <legend>Sicherheitsstufe wählen:</legend>
-            <label>
-              <input type="radio" name="auth_method" value="password" checked>
-              <strong>1. Nur Passwort</strong> (einfach)
-            </label>
-            <label>
-              <input type="radio" name="auth_method" value="email_otp">
-              <strong>2. E-Mail-Code (2FA)</strong> (Code per E-Mail)
-            </label>
-            <label>
-              <input type="radio" name="auth_method" value="totp">
-              <strong>3. Authenticator-App (TOTP)</strong> (Google/MS Authenticator)
-            </label>
-          </fieldset>
+        <button type="submit" class="btn-primary">Anmelden</button>
+      </form>
 
-          <button type="submit">Registrieren</button>
-        </form>
-      </section>
+      <p class="small center"><a href="#" id="link-forgot-pw">Passwort vergessen?</a></p>
+
+      <div class="divider"><span>noch kein Konto?</span></div>
+
+      <button type="button" id="btn-show-register" class="btn-secondary btn-block">Konto erstellen</button>
     </div>
 
-    <!-- 2. TOTP-Setup-Ansicht (nur nach Registrierung mit TOTP) -->
+    <!-- ============================================================
+         2. REGISTRIEREN - Schritt 1: Zugangsdaten
+         ============================================================ -->
+    <div id="register-view" style="display: none;">
+      <form id="register-form" novalidate>
+        <label for="register-email">E-Mail</label>
+        <input id="register-email" name="email" type="email" placeholder="name@beispiel.de" required autocomplete="email">
+
+        <label for="register-password">Passwort</label>
+        <input id="register-password" name="password" type="password" placeholder="Mindestens 8 Zeichen" required autocomplete="new-password">
+
+        <label for="register-password2">Passwort wiederholen</label>
+        <input id="register-password2" name="password_confirm" type="password" placeholder="Nochmal eingeben" required autocomplete="new-password">
+
+        <!-- Schritt 2: Sicherheitsstufe wählen -->
+        <div id="register-step-2" style="display: none;">
+          <h3>Möchtest du dein Konto zusätzlich absichern?</h3>
+          <p class="small">
+            Ein zweiter Faktor schützt dein Konto auch dann, wenn jemand dein Passwort kennt.
+            Du kannst die Einstellung später ändern.
+          </p>
+
+          <div class="option-list">
+            <label class="option">
+              <input type="radio" name="auth_method" value="password" checked>
+              <span>
+                <strong>Nein, nur Passwort</strong>
+                <small>Einfach – ein Faktor reicht</small>
+              </span>
+            </label>
+
+            <label class="option">
+              <input type="radio" name="auth_method" value="email_otp">
+              <span>
+                <strong>Ja, per E-Mail-Code</strong>
+                <small>2FA – Code kommt bei jedem Login per E-Mail</small>
+              </span>
+            </label>
+
+            <label class="option">
+              <input type="radio" name="auth_method" value="totp">
+              <span>
+                <strong>Ja, per Authenticator-App</strong>
+                <small>2FA – sicherste Variante (TOTP, z. B. Google Authenticator)</small>
+              </span>
+            </label>
+          </div>
+
+          <div class="btn-row">
+            <button type="button" id="register-back-btn" class="btn-secondary">Zurück</button>
+            <button type="submit" class="btn-primary">Konto erstellen</button>
+          </div>
+        </div>
+
+        <!-- Schritt 1 -->
+        <button type="button" id="register-next-btn" class="btn-primary">Weiter</button>
+      </form>
+
+      <p class="small center">
+        <button type="button" id="cancel-register-btn" class="linklike">Schon ein Konto? Zur Anmeldung</button>
+      </p>
+    </div>
+
+    <!-- ============================================================
+         3. TOTP-Setup (nach Registrierung mit Authenticator-App)
+         ============================================================ -->
     <div id="totp-setup-view" style="display: none;">
-      <h2>Authenticator-App einrichten</h2>
       <p>Scanne diesen QR-Code mit deiner Authenticator-App (z. B. Google Authenticator):</p>
       <div id="totp-qr-container"></div>
       <p class="small">Oder gib diesen Schlüssel manuell ein:<br><strong id="totp-secret-key"></strong></p>
-      <button type="button" id="totp-done-btn">Fertig & zum Login</button>
+      <button type="button" id="totp-done-btn" class="btn-primary btn-block">Fertig & zum Login</button>
     </div>
 
-    <!-- 3. 2FA-Code-Eingabe (bei Login mit E-Mail-Code oder TOTP) -->
+    <!-- ============================================================
+         4. 2FA-Code-Eingabe (bei Login mit E-Mail-Code oder TOTP)
+         ============================================================ -->
     <div id="two-factor-view" style="display: none;">
-      <h2>Zwei-Faktor-Bestätigung</h2>
       <p id="two-factor-info">Bitte gib deinen 6-stelligen Code ein.</p>
+
+      <!-- Dev-Modus: kein SMTP-Server konfiguriert -> Code wird direkt hier angezeigt -->
+      <div id="dev-code-box" class="dev-code-box" style="display: none;">
+        <p class="dev-code-title">Dev-Modus: kein E-Mail-Server konfiguriert</p>
+        <p class="dev-code-label">Dein Bestätigungscode lautet:</p>
+        <p id="dev-code-value" class="dev-code-value">------</p>
+        <p class="dev-code-hint">Der Code wurde nicht per E-Mail verschickt, sondern direkt hier eingeblendet.</p>
+      </div>
+
       <form id="two-factor-form" novalidate>
-        <input name="code" type="text" maxlength="6" pattern="[0-9]{6}" placeholder="6-stelliger Code" autocomplete="one-time-code" required autofocus>
-        <button type="submit">Bestätigen & Einloggen</button>
-        <button type="button" id="cancel-2fa-btn" class="secondary">Zurück</button>
+        <label for="two-factor-code">Bestätigungscode</label>
+        <input id="two-factor-code" name="code" type="text" maxlength="6" pattern="[0-9]{6}" placeholder="6-stelliger Code" autocomplete="one-time-code" required autofocus>
+        <button type="submit" class="btn-primary">Bestätigen & Einloggen</button>
+        <button type="button" id="cancel-2fa-btn" class="btn-secondary btn-block">Zurück</button>
       </form>
     </div>
 
-    <!-- 4. Passwort-Reset-Ansicht -->
+    <!-- ============================================================
+         5. Passwort-Reset
+         ============================================================ -->
     <div id="forgot-view" style="display: none;">
-      <h2>Passwort zurücksetzen</h2>
-
       <!-- Schritt A: Code anfordern -->
       <div id="forgot-step-1">
-        <p>Gib deine registrierte E-Mail-Adresse ein:</p>
+        <p class="small">Gib deine registrierte E-Mail-Adresse ein:</p>
         <form id="forgot-request-form" novalidate>
-          <input name="email" type="email" placeholder="E-Mail" required>
-          <button type="submit">Reset-Code anfordern</button>
+          <label for="forgot-email">E-Mail</label>
+          <input id="forgot-email" name="email" type="email" placeholder="name@beispiel.de" required autocomplete="email">
+          <button type="submit" class="btn-primary">Reset-Code anfordern</button>
         </form>
       </div>
 
       <!-- Schritt B: Code & neues Passwort eingeben -->
       <div id="forgot-step-2" style="display: none;">
-        <p>Wir haben dir einen 6-stelligen Code gesendet. Bitte gib ihn zusammen mit deinem neuen Passwort ein:</p>
+        <p class="small">Wir haben dir einen 6-stelligen Code gesendet. Bitte gib ihn zusammen mit deinem neuen Passwort ein:</p>
+
+        <!-- Dev-Modus: kein SMTP-Server konfiguriert -> Code wird direkt hier angezeigt -->
+        <div id="dev-code-box-reset" class="dev-code-box" style="display: none;">
+          <p class="dev-code-title">Dev-Modus: kein E-Mail-Server konfiguriert</p>
+          <p class="dev-code-label">Dein Reset-Code lautet:</p>
+          <p id="dev-code-value-reset" class="dev-code-value">------</p>
+          <p class="dev-code-hint">Der Code wurde nicht per E-Mail verschickt, sondern direkt hier eingeblendet.</p>
+        </div>
+
         <form id="forgot-reset-form" novalidate>
-          <input name="code" type="text" maxlength="6" placeholder="6-stelliger Reset-Code" required>
-          <input name="new_password" type="password" placeholder="Neues Passwort (min. 8 Zeichen)" required>
-          <button type="submit">Passwort speichern</button>
+          <label for="reset-code">Reset-Code</label>
+          <input id="reset-code" name="code" type="text" maxlength="6" placeholder="6-stelliger Code" required autocomplete="one-time-code">
+
+          <label for="reset-password">Neues Passwort</label>
+          <input id="reset-password" name="new_password" type="password" placeholder="Mindestens 8 Zeichen" required autocomplete="new-password">
+
+          <button type="submit" class="btn-primary">Passwort speichern</button>
         </form>
       </div>
 
-      <p><button type="button" id="cancel-forgot-btn" class="secondary">Zurück zum Login</button></p>
+      <p class="small center">
+        <button type="button" id="cancel-forgot-btn" class="linklike">Zurück zum Login</button>
+      </p>
     </div>
-
-    <!-- Statusmeldungen -->
-    <p id="status" role="alert"></p>
   </main>
 
-  <script src="/static/app.js?v=4"></script>
+  <script src="/static/app.js?v=5"></script>
 </body>
 </html>

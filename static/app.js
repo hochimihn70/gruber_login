@@ -1,14 +1,28 @@
+// ==========================================================================================
+// Login & Auth Demo - Frontend
+// Aufbau: 4 Views, die per display umgeschaltet werden (Mini-SPA ohne Framework)
+// ==========================================================================================
+
+// ------------------------------------------------------------------------------------------
 // DOM-Elemente
+// ------------------------------------------------------------------------------------------
 const mainView = document.getElementById('main-view');
+const registerView = document.getElementById('register-view');
 const totpSetupView = document.getElementById('totp-setup-view');
 const twoFactorView = document.getElementById('two-factor-view');
 const forgotView = document.getElementById('forgot-view');
 
-const loginForm = document.getElementById('login-form') || document.getElementById('login');
-const registerForm = document.getElementById('register-form') || document.getElementById('register');
-const twoFactorForm = document.getElementById('two-factor-form') || document.getElementById('two-factor');
+const loginForm = document.getElementById('login-form');
+const registerForm = document.getElementById('register-form');
+const twoFactorForm = document.getElementById('two-factor-form');
 const twoFactorInfo = document.getElementById('two-factor-info');
-const cancel2faBtn = document.getElementById('cancel-2fa-btn') || document.getElementById('cancel-2fa');
+const cancel2faBtn = document.getElementById('cancel-2fa-btn');
+
+const btnShowRegister = document.getElementById('btn-show-register');
+const cancelRegisterBtn = document.getElementById('cancel-register-btn');
+const registerNextBtn = document.getElementById('register-next-btn');
+const registerBackBtn = document.getElementById('register-back-btn');
+const registerStep2 = document.getElementById('register-step-2');
 
 const linkForgotPw = document.getElementById('link-forgot-pw');
 const cancelForgotBtn = document.getElementById('cancel-forgot-btn');
@@ -22,11 +36,22 @@ const totpSecretKey = document.getElementById('totp-secret-key');
 const totpDoneBtn = document.getElementById('totp-done-btn');
 
 const statusText = document.getElementById('status');
+const pageTitle = document.getElementById('page-title');
+
+// Dev-Modus-Boxen (wird nur eingeblendet, wenn kein E-Mail-Server konfiguriert ist)
+const devCodeBox = document.getElementById('dev-code-box');
+const devCodeValue = document.getElementById('dev-code-value');
+const devCodeBoxReset = document.getElementById('dev-code-box-reset');
+const devCodeValueReset = document.getElementById('dev-code-value-reset');
 
 // Temporaere Session-Daten fuer 2FA und Reset
 let pendingEmail = '';
 let resetEmail = '';
 
+
+// ------------------------------------------------------------------------------------------
+// Hilfsfunktionen
+// ------------------------------------------------------------------------------------------
 
 // Zeigt Statusmeldungen (Gruen fuer OK, Rot fuer Fehler)
 function showMessage(text, isError) {
@@ -35,13 +60,43 @@ function showMessage(text, isError) {
 }
 
 
-// Schaltet zwischen den 4 Bildschirmen um
+// Titel der Seite, je nach View
+const VIEW_TITLES = {
+  'main': 'Login',
+  'register': 'Konto erstellen',
+  'totp-setup': 'Authenticator-App',
+  'two-factor': 'Zwei-Faktor-Bestätigung',
+  'forgot': 'Passwort zurücksetzen'
+};
+
+
+// Schaltet zwischen den Views um
 function showView(viewName) {
   mainView.style.display = viewName === 'main' ? 'block' : 'none';
+  registerView.style.display = viewName === 'register' ? 'block' : 'none';
   totpSetupView.style.display = viewName === 'totp-setup' ? 'block' : 'none';
   twoFactorView.style.display = viewName === 'two-factor' ? 'block' : 'none';
   forgotView.style.display = viewName === 'forgot' ? 'block' : 'none';
+  if (pageTitle) pageTitle.textContent = VIEW_TITLES[viewName] || 'Login';
   showMessage('', false);
+}
+
+
+// Blendet den Code direkt im Browser ein (nur wenn kein E-Mail-Server konfiguriert ist).
+// So bleibt der Login auch ohne SMTP im Dev-Modus bedienbar.
+function showDevCode(code, isReset) {
+  const box = isReset ? devCodeBoxReset : devCodeBox;
+  const value = isReset ? devCodeValueReset : devCodeValue;
+  if (!box || !value || !code) return;
+  value.textContent = code;
+  box.style.display = 'block';
+}
+
+
+// Blendet die Dev-Modus-Boxen wieder aus (z. B. wenn der Nutzer zurueckgeht)
+function hideDevCode() {
+  if (devCodeBox) devCodeBox.style.display = 'none';
+  if (devCodeBoxReset) devCodeBoxReset.style.display = 'none';
 }
 
 
@@ -69,9 +124,9 @@ async function postJSON(url, payload) {
 }
 
 
-// -------------------------------------------------------------
+// ------------------------------------------------------------------------------------------
 // 1. ANMELDEN (Login)
-// -------------------------------------------------------------
+// ------------------------------------------------------------------------------------------
 async function onLogin(event) {
   event.preventDefault();
 
@@ -101,6 +156,7 @@ async function onLogin(event) {
     else if (result.status === '2fa_required') {
       pendingEmail = email;
       showView('two-factor');
+      hideDevCode();
 
       if (result.method === 'email_otp') {
         twoFactorInfo.textContent = `Ein 6-stelliger Bestätigungscode wurde an ${email} gesendet.`;
@@ -108,7 +164,13 @@ async function onLogin(event) {
         twoFactorInfo.textContent = 'Gib den 6-stelligen Code aus deiner Authenticator-App (z. B. Google Authenticator) ein:';
       }
 
-      twoFactorForm.code.value = '';
+      // Dev-Modus: kein SMTP konfiguriert -> Code direkt anzeigen und ins Feld eintragen
+      if (result.dev_code) {
+        showDevCode(result.dev_code, false);
+        twoFactorInfo.textContent = 'Dev-Modus: Es konnte keine E-Mail verschickt werden. Nutze den unten angezeigten Code.';
+        twoFactorForm.code.value = result.dev_code;
+      }
+
       twoFactorForm.code.focus();
       showMessage(result.message || '2FA-Bestätigung erforderlich.', false);
     }
@@ -118,9 +180,113 @@ async function onLogin(event) {
 }
 
 
-// -------------------------------------------------------------
-// 2. 2FA-CODE BESTAETIGEN
-// -------------------------------------------------------------
+// ------------------------------------------------------------------------------------------
+// 2. REGISTRIEREN (zwei Schritte)
+//    Schritt 1: E-Mail + Passwort
+//    Schritt 2: Sicherheitsstufe waehlen (nur Passwort / E-Mail-2FA / TOTP)
+// ------------------------------------------------------------------------------------------
+
+// Setzt die Registrierung auf Schritt 1 zurueck (leere Felder, 2FA-Auswahl unsichtbar)
+function resetRegisterForm() {
+  registerForm.reset();
+  registerStep2.style.display = 'none';
+  registerNextBtn.style.display = 'block';
+}
+
+
+// Prueft Schritt 1 und blendet die Auswahl der Sicherheitsstufe ein
+function showRegisterStep2() {
+  const email = registerForm.email.value.trim().toLowerCase();
+  const password = registerForm.password.value;
+  const password2 = registerForm.password_confirm.value;
+
+  if (!email || !password) {
+    showMessage('Bitte E-Mail und Passwort eingeben.', true);
+    return;
+  }
+  if (!email.includes('@')) {
+    showMessage('Bitte eine gültige E-Mail-Adresse eingeben.', true);
+    return;
+  }
+  if (password.length < 8) {
+    showMessage('Das Passwort muss mindestens 8 Zeichen haben.', true);
+    return;
+  }
+  if (password !== password2) {
+    showMessage('Die beiden Passwörter stimmen nicht überein.', true);
+    return;
+  }
+
+  showMessage('', false);
+  registerStep2.style.display = 'block';
+  registerNextBtn.style.display = 'none';
+  registerStep2.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+
+async function onRegister(event) {
+  event.preventDefault();
+
+  // Schritt 1 -> Schritt 2 (Auswahl der Sicherheitsstufe)
+  if (registerStep2.style.display === 'none') {
+    showRegisterStep2();
+    return;
+  }
+
+  // Schritt 2 -> Registrierung abschicken
+  const email = registerForm.email.value.trim().toLowerCase();
+  const password = registerForm.password.value;
+  const authMethodInput = registerForm.querySelector('input[name="auth_method"]:checked');
+  const auth_method = authMethodInput ? authMethodInput.value : 'password';
+
+  try {
+    // Passwort im Browser hashen vor dem Senden:
+    const password_hash = await hashPassword(password);
+    const result = await postJSON('/api/register', { email, password_hash, auth_method });
+
+    if (!result.ok) {
+      showMessage(result.error || 'Registrierung fehlgeschlagen.', true);
+      return;
+    }
+
+    // Direkt in den Ablauf weiterleiten (kein toter Klick!):
+    if (result.status === 'success') {
+      window.location.href = result.redirect || '/welcome';
+    } else if (result.status === '2fa_required') {
+      pendingEmail = email;
+      resetRegisterForm();
+      showView('two-factor');
+      hideDevCode();
+      twoFactorInfo.textContent = `Ein 6-stelliger Bestätigungscode wurde an ${email} gesendet.`;
+
+      // Dev-Modus: kein SMTP konfiguriert -> Code direkt anzeigen und ins Feld eintragen
+      if (result.dev_code) {
+        showDevCode(result.dev_code, false);
+        twoFactorInfo.textContent = 'Dev-Modus: Es konnte keine E-Mail verschickt werden. Nutze den unten angezeigten Code.';
+        twoFactorForm.code.value = result.dev_code;
+      }
+
+      twoFactorForm.code.focus();
+      showMessage(result.message || 'Code an deine E-Mail gesendet!', false);
+    } else if (result.status === 'totp_setup') {
+      resetRegisterForm();
+      totpQrContainer.innerHTML = result.qr_svg;
+      totpSecretKey.textContent = result.totp_secret;
+      showView('totp-setup');
+      showMessage('Registrierung erfolgreich! Bitte richte deine Authenticator-App ein.', false);
+    } else {
+      showMessage(result.message || 'Erfolgreich!', false);
+      showView('main');
+    }
+  } catch (e) {
+    showMessage('Der Server ist nicht erreichbar.', true);
+  }
+}
+
+
+// ------------------------------------------------------------------------------------------
+// 3. 2FA-CODE BESTAETIGEN
+// ------------------------------------------------------------------------------------------
 async function onVerify2FA(event) {
   event.preventDefault();
 
@@ -143,70 +309,9 @@ async function onVerify2FA(event) {
 }
 
 
-// -------------------------------------------------------------
-// 3. REGISTRIEREN
-// -------------------------------------------------------------
-async function onRegister(event) {
-  event.preventDefault();
-
-  const email = registerForm.email.value.trim().toLowerCase();
-  const password = registerForm.password.value;
-  const authMethodInput = registerForm.querySelector('input[name="auth_method"]:checked');
-  const auth_method = authMethodInput ? authMethodInput.value : 'password';
-
-  if (!email || !password) {
-    showMessage('Bitte E-Mail und Passwort eingeben.', true);
-    return;
-  }
-  if (!email.includes('@')) {
-    showMessage('Bitte eine gültige E-Mail-Adresse eingeben.', true);
-    return;
-  }
-  if (password.length < 8) {
-    showMessage('Das Passwort muss mindestens 8 Zeichen haben.', true);
-    return;
-  }
-
-  try {
-    // Passwort im Browser hashen vor dem Senden:
-    const password_hash = await hashPassword(password);
-    const result = await postJSON('/api/register', { email, password_hash, auth_method });
-
-    if (!result.ok) {
-      showMessage(result.error || 'Registrierung fehlgeschlagen.', true);
-      return;
-    }
-
-    registerForm.reset();
-
-    // Direkt in den Ablauf weiterleiten (kein toter Klick!):
-    if (result.status === 'success') {
-      window.location.href = result.redirect || '/welcome';
-    } else if (result.status === '2fa_required') {
-      pendingEmail = email;
-      showView('two-factor');
-      twoFactorInfo.textContent = `Ein 6-stelliger Bestätigungscode wurde an ${email} gesendet.`;
-      twoFactorForm.code.value = '';
-      twoFactorForm.code.focus();
-      showMessage(result.message || 'Code an deine E-Mail gesendet!', false);
-    } else if (result.status === 'totp_setup') {
-      totpQrContainer.innerHTML = result.qr_svg;
-      totpSecretKey.textContent = result.totp_secret;
-      showView('totp-setup');
-      showMessage('Registrierung erfolgreich! Bitte richte deine Authenticator-App ein.', false);
-    } else {
-      showMessage(result.message || 'Erfolgreich!', false);
-      showView('main');
-    }
-  } catch (e) {
-    showMessage('Der Server ist nicht erreichbar.', true);
-  }
-}
-
-
-// -------------------------------------------------------------
+// ------------------------------------------------------------------------------------------
 // 4. PASSWORT VERGESSEN & ZURUECKSETZEN
-// -------------------------------------------------------------
+// ------------------------------------------------------------------------------------------
 async function onRequestReset(event) {
   event.preventDefault();
   const email = forgotRequestForm.email.value.trim().toLowerCase();
@@ -220,11 +325,20 @@ async function onRequestReset(event) {
     resetEmail = email;
     forgotStep1.style.display = 'none';
     forgotStep2.style.display = 'block';
+    hideDevCode();
+
+    // Dev-Modus: kein SMTP konfiguriert -> Code direkt anzeigen und ins Feld eintragen
+    if (result.dev_code) {
+      showDevCode(result.dev_code, true);
+      forgotResetForm.code.value = result.dev_code;
+    }
+
     showMessage(result.message || 'Code gesendet.', false);
   } catch (e) {
     showMessage('Der Server ist nicht erreichbar.', true);
   }
 }
+
 
 async function onPerformReset(event) {
   event.preventDefault();
@@ -264,11 +378,31 @@ async function onPerformReset(event) {
 }
 
 
+// ------------------------------------------------------------------------------------------
 // Event Listener
+// ------------------------------------------------------------------------------------------
 if (loginForm) loginForm.addEventListener('submit', onLogin);
 if (registerForm) registerForm.addEventListener('submit', onRegister);
 if (twoFactorForm) twoFactorForm.addEventListener('submit', onVerify2FA);
 if (cancel2faBtn) cancel2faBtn.addEventListener('click', () => showView('main'));
+
+// Registrierung: View wechseln und Schritte steuern
+if (btnShowRegister) {
+  btnShowRegister.addEventListener('click', () => {
+    resetRegisterForm();
+    showView('register');
+    registerForm.email.focus();
+  });
+}
+if (cancelRegisterBtn) cancelRegisterBtn.addEventListener('click', () => showView('main'));
+if (registerNextBtn) registerNextBtn.addEventListener('click', showRegisterStep2);
+if (registerBackBtn) {
+  registerBackBtn.addEventListener('click', () => {
+    registerStep2.style.display = 'none';
+    registerNextBtn.style.display = 'block';
+    showMessage('', false);
+  });
+}
 
 if (totpDoneBtn) totpDoneBtn.addEventListener('click', () => showView('main'));
 
