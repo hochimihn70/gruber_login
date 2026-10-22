@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Sprechskript Gruber Login</title>
+  <link rel="stylesheet" href="print.css">
+  <style>
+    body { font-size: 11.2pt; line-height: 1.55; }
+    .script p { margin-bottom: 8pt; }
+    .regie { margin: 6pt 0 10pt; font-size: 10pt; }
+    h2 { margin-top: 19pt; }
+    .handoff {
+      margin: 10pt 0;
+      padding: 7pt 10pt;
+      background: #eef2f8;
+      border-left: 3px solid #1f2937;
+      font-style: italic;
+      break-inside: avoid;
+    }
+  </style>
+</head>
+<body>
+
+<header class="doc-head">
+  <p class="eyebrow">Sprechskript</p>
+  <h1>Gruber Login</h1>
+  <p class="subtitle">Zum Ablesen · Gesamtdauer ca. 8–10 Minuten</p>
+  <p class="meta">
+    Person A ca. 4–5 Min. · Person B ca. 4–5 Min. ·
+    <span class="regie">Kursiv = Regieanweisung</span> · Stand: 22. Oktober 2026
+  </p>
+</header>
+
+<div class="script">
+
+<h2>Teil 1 · Person A – Idee, Aufbau, Login-Modi</h2>
+
+<h3>1. Begrüßung und Idee <span class="tag">ca. 1 Min.</span></h3>
+<p>
+  Guten Tag, wir stellen Ihnen unser Projekt „Gruber Login“ vor. Das ist eine
+  Login-Anwendung, bei der man bei der Registrierung selbst wählt, wie sicher
+  die Anmeldung sein soll.
+</p>
+<p>
+  Die Idee dahinter: Nicht jede Seite braucht die gleiche Sicherheit. Deshalb
+  bieten wir drei Stufen an – vom einfachen Passwort bis zur
+  Authenticator-App.
+</p>
+
+<h3>2. Technischer Aufbau <span class="tag">ca. 1,5 Min.</span></h3>
+<p>Die Anwendung besteht aus drei Docker-Containern:</p>
+<ul>
+  <li><strong>Datenbank:</strong> MySQL speichert Benutzer, Sessions und die temporären Codes.</li>
+  <li><strong>Web:</strong> Das Backend mit FastAPI in Python liefert die Seiten aus und stellt die Schnittstellen bereit.</li>
+  <li><strong>Cloudflared:</strong> Ein Tunnel, der die Seite per HTTPS aus dem Internet erreichbar macht, ohne dass wir Ports am Router öffnen müssen.</li>
+</ul>
+<p>
+  Das Backend ist ein Python-Paket <code>app/</code> mit rund 1.400 Zeilen
+  inklusive Kommentaren. Wichtig ist die Aufteilung: Die <strong>Router</strong>
+  nehmen die HTTP-Anfragen an, zum Beispiel <code>login</code> oder
+  <code>register</code>. Die <strong>Services</strong> enthalten die Regeln –
+  wer darf sich anmelden, wie wird ein Code geprüft. Und kleine Module wie
+  <code>security.py</code> oder <code>db.py</code> kümmern sich nur um
+  Kryptografie oder die Datenbank. So steht in jeder Datei eine Sache, und
+  keine Datei ist länger als etwa 150 Zeilen.
+</p>
+<p>
+  Alles startet mit einem einzigen Befehl: <code>docker compose up</code>.
+</p>
+
+<h3>3. Die drei Login-Modi <span class="tag">ca. 2 Min.</span></h3>
+
+<p><strong>Modus 1: Nur Passwort</strong></p>
+<p>
+  E-Mail und Passwort, danach ist man direkt eingeloggt. Das ist der
+  einfachste Modus.
+</p>
+
+<p><strong>Modus 2: E-Mail-Code</strong></p>
+<p>
+  Nach dem Passwort bekommt man einen sechsstelligen Code per E-Mail. Er ist
+  zehn Minuten gültig. Das ist eine Zwei-Faktor-Authentifizierung: etwas, das
+  man weiß, plus etwas, das man besitzt – nämlich Zugriff auf das Postfach.
+</p>
+
+<p><strong>Modus 3: Authenticator-App</strong></p>
+<p>
+  Bei der Registrierung wird ein QR-Code angezeigt, den man mit einer App wie
+  Google Authenticator scannt. Den ersten Code aus der App bestätigt man direkt
+  auf der Seite – damit ist die Einrichtung fertig und man ist angemeldet.
+  Danach braucht jeder Login den Code aus der App. Er ändert sich alle
+  30 Sekunden und funktioniert ohne Internet. Grundlage ist der Standard
+  RFC 6238.
+</p>
+
+<p class="handoff">
+  Übergabe: „Wie ein Login technisch abläuft und wie wir die Daten schützen,
+  erklärt dir jetzt [Name Person B].“
+</p>
+
+<h2>Teil 2 · Person B – Ablauf, Sicherheit, Demo, Fazit</h2>
+
+<h3>4. Ablauf eines Logins <span class="tag">ca. 1,5 Min.</span></h3>
+<ol>
+  <li>Der Nutzer gibt E-Mail und Passwort ein. Der Browser schickt beides über HTTPS an den Server.</li>
+  <li>Der Server sucht das Konto und prüft das Passwort mit Argon2id. Das dauert absichtlich etwa 50 Millisekunden.</li>
+  <li>Je nach Modus ist man jetzt eingeloggt, oder der Server verlangt den zweiten Faktor: E-Mail-Code oder Authenticator-Code.</li>
+  <li>Nach erfolgreicher Prüfung erzeugt der Server eine Session: einen zufälligen Token in einem <code>HttpOnly</code>-Cookie, sieben Tage gültig. In der Datenbank liegt nur der Hash des Tokens.</li>
+  <li>Die Willkommensseite prüft bei jedem Aufruf diesen Cookie. Ohne gültige Session wird man zurück zum Login geleitet.</li>
+</ol>
+
+<h3>5. Sicherheit <span class="tag">ca. 1,5 Min.</span></h3>
+<ul>
+  <li><strong>Passwörter</strong> liegen nie im Klartext in der Datenbank, sondern nur als Argon2id-Hash mit zufälligem Salt. Aus dem Hash lässt sich das Passwort nicht zurückrechnen.</li>
+  <li><strong>Warum wird nicht im Browser gehasht?</strong> Ein Hash aus dem Browser wäre selbst wieder ein Passwort: Wer ihn abfängt, kann sich damit anmelden. Ein einzelnes SHA-256 wäre außerdem viel zu schnell berechnet. Deshalb rechnet der Server – geschützt durch HTTPS – und verwendet mit Argon2id ein absichtlich langsames, speicherresistentes Verfahren.</li>
+  <li><strong>Der Cookie</strong> ist <code>HttpOnly</code>, JavaScript kann ihn also nicht auslesen. <code>SameSite=Lax</code> blockiert fremde Formular-Posts, und standardmäßig wird er nur über HTTPS gesendet.</li>
+  <li><strong>Codes in der Datenbank:</strong> Der E-Mail-Code liegt nur als Signatur mit dem Server-Geheimnis, das TOTP-Secret verschlüsselt. Ein Datenbank-Dump zeigt also keinen gültigen Code.</li>
+  <li><strong>Durchprobieren wird gebremst:</strong> Nach fünf falschen Codes ist der Code ungültig. Dazu kommen Rate-Limits pro IP und pro E-Mail-Adresse. Ein TOTP-Code kann außerdem nur einmal verwendet werden – jeder 30-Sekunden-Schritt wird nur einmal akzeptiert.</li>
+  <li><strong>Fremde Konten</strong> lassen sich nicht überschreiben: Wer sich mit einer schon vergebenen E-Mail registriert, braucht das richtige Passwort.</li>
+  <li><strong>Anti-Enumeration:</strong> Beim Passwort-Reset verrät die Antwort nicht, ob eine E-Mail-Adresse existiert.</li>
+</ul>
+
+<p><strong>Ehrlich gesagt: Das sind unsere Grenzen</strong></p>
+<p>
+  Das Projekt ist ein Lern- und Demoprojekt, kein fertiges Produktivsystem.
+  Uns ist bewusst:
+</p>
+<ul>
+  <li>Der Rate-Limiter liegt im Speicher und gilt pro Prozess. Für mehrere Worker bräuchten wir Redis.</li>
+  <li>Im Entwicklungsmodus stehen die Codes im Klartext im Log. Für die Demo praktisch, für Produktion nicht gedacht.</li>
+  <li>Datenbank-Änderungen passieren beim Start; für echte Migrationen wäre Alembic der nächste Schritt.</li>
+  <li>Es gibt noch keine Wiederherstellungscodes für ein verlorenes Handy.</li>
+</ul>
+
+<h3>6. Live-Demo <span class="tag">ca. 2 Min.</span></h3>
+<p class="regie">
+  Vorher prüfen: Docker Compose läuft, http://localhost:5000 oder die
+  Tunnel-Adresse ist offen, ein Log-Fenster (<code>docker compose logs -f web</code>)
+  liegt bereit, die Authenticator-App auf dem Handy ist eingerichtet.
+</p>
+<ol>
+  <li><strong>Passwort:</strong> Registrieren mit „Nur Passwort“ – man landet direkt auf der Willkommensseite.</li>
+  <li><strong>E-Mail-Code:</strong> Abmelden, neu registrieren mit „Code per E-Mail“. Ist kein SMTP konfiguriert, erscheint der Code in einem gelben Kasten auf der Seite und zusätzlich im Log. Code eingeben – angemeldet.</li>
+  <li><strong>Authenticator:</strong> Registrieren mit „Authenticator-App“, QR-Code mit dem Handy scannen, den angezeigten Code eingeben – die Einrichtung ist bestätigt und man ist direkt angemeldet.</li>
+  <li><strong>Passwort vergessen:</strong> Abmelden, „Passwort vergessen?“ wählen, Code und neues Passwort eingeben, dann mit dem neuen Passwort anmelden.</li>
+  <li><strong>Schutz:</strong> <code>/welcome</code> ohne Login aufrufen – man wird zur Startseite zurückgeleitet.</li>
+</ol>
+
+<h3>7. Fazit und Ausblick <span class="tag">ca. 0,5 Min.</span></h3>
+<p>
+  Wir haben gezeigt: eine Login-Anwendung mit drei Sicherheitsstufen, die
+  Passwörter mit Argon2id geschützt speichert, Durchprobieren bremst, per
+  Docker reproduzierbar startet und wenig Ressourcen braucht – etwa 0,5 bis
+  0,8 Gigabyte Arbeitsspeicher als Schätzwert. Dazu kommen 30 automatisierte
+  Tests, die alle Abläufe ohne Datenbank und ohne Mailserver prüfen.
+</p>
+<p>
+  Als nächste Schritte würden wir den Rate-Limiter über Redis teilen,
+  Datenbank-Migrationen mit Alembic einführen und Wiederherstellungscodes für
+  die Authenticator-App ergänzen.
+</p>
+<p>Vielen Dank! Haben Sie Fragen?</p>
+
+</div>
+
+<h2>Mögliche Fragen und Kurzantworten</h2>
+<table>
+  <thead><tr>
+    <th style="width: 34%">Frage</th>
+    <th>Kurzantwort</th>
+  </tr></thead>
+  <tr>
+    <td>Warum Argon2id und nicht bcrypt?</td>
+    <td>Beides ist sicher. Argon2id ist die OWASP-Empfehlung für neue Projekte: Es ist speicherresistent, ein Angreifer kann also nicht einfach viele Hashes parallel berechnen.</td>
+  </tr>
+  <tr>
+    <td>Warum kein Hashen im Browser?</td>
+    <td>Der Hash wäre selbst ein gültiges Passwort („Pass-the-Hash“). Außerdem ist SHA-256 für Passwörter viel zu schnell. HTTPS plus Argon2id auf dem Server ist der übliche Weg.</td>
+  </tr>
+  <tr>
+    <td>Unterschied E-Mail-Code und Authenticator?</td>
+    <td>Der E-Mail-Code hängt vom Postfach ab. Der Authenticator-Code wird auf dem Handy aus einem geheimen Schlüssel und der Uhrzeit berechnet und funktioniert offline.</td>
+  </tr>
+  <tr>
+    <td>Sind sechs Ziffern nicht zu wenig?</td>
+    <td>Es gibt eine Million Kombinationen. Nach fünf Fehlversuchen ist der Code ungültig, zusätzlich greifen Rate-Limits. TOTP-Codes gelten nur 30 Sekunden und jeder Schritt nur einmal.</td>
+  </tr>
+  <tr>
+    <td>Wozu der Cloudflare Tunnel?</td>
+    <td>Er liefert HTTPS und Erreichbarkeit aus dem Internet, ohne Portfreigaben am Router.</td>
+  </tr>
+  <tr>
+    <td>Was passiert, wenn das Cookie gestohlen wird?</td>
+    <td>Dann hat man die Session. Deshalb <code>HttpOnly</code> und <code>Secure</code>, und Sessions laufen nach sieben Tagen ab. Ein Logout löscht sie sofort auf dem Server.</td>
+  </tr>
+  <tr>
+    <td>Was passiert ohne <code>APP_SECRET</code>?</td>
+    <td>Die App startet mit einer Warnung und einem zufälligen Geheimnis. Vorhandene TOTP-Secrets sind nach einem Neustart dann nicht mehr entschlüsselbar – deshalb gehört der Wert fest in die <code>.env</code>.</td>
+  </tr>
+  <tr>
+    <td>Was fehlt für den Produktivbetrieb?</td>
+    <td>Geteilter Rate-Limiter (Redis), Migrationen mit Alembic, E-Mail-Verifizierung bei der Registrierung, Wiederherstellungscodes und Monitoring.</td>
+  </tr>
+</table>
+
+</body>
+</html>

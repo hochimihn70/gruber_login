@@ -1,20 +1,21 @@
 """Datenbank-Anbindung.
 
-Hier liegt der Engine, die Basisklasse für die Modelle und eine kleine
-Aufräum-Funktion für Schema-Änderungen aus früheren Versionen.
+Hier liegen Engine, Basisklasse, die Session-Dependency für FastAPI und eine
+kleine Aufräum-Funktion für Schema-Änderungen aus früheren Versionen.
 """
 
 import logging
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from config import database_url
+from app import config
 
 logger = logging.getLogger(__name__)
 
-engine = create_engine(database_url(), pool_pre_ping=True)
+engine = create_engine(config.database_url(), pool_pre_ping=True)
 
 # expire_on_commit=False: Nach dem Commit bleiben die geladenen Werte (z. B. user.id)
 # lesbar. Das erspart das übliche "ID vor dem Schließen retten".
@@ -26,12 +27,8 @@ class Base(DeclarativeBase):
 
 
 @contextmanager
-def db_session():
-    """DB-Session als Context Manager: schließt auch bei einer Exception.
-
-    Dadurch kann keine Verbindung mehr leaken - vorher wurde `session.close()`
-    an 27 Stellen von Hand aufgerufen.
-    """
+def db_session() -> Iterator[Session]:
+    """DB-Session als Context Manager: schließt auch bei einer Exception."""
     session = SessionLocal()
     try:
         yield session
@@ -39,9 +36,15 @@ def db_session():
         session.close()
 
 
+def get_db() -> Iterator[Session]:
+    """FastAPI-Dependency: eine Session pro Request, garantiert geschlossen."""
+    with db_session() as session:
+        yield session
+
+
 def init_db() -> None:
     """Tabellen anlegen (falls neu) und alte Installationen nachziehen."""
-    from models import Base as ModelBase  # noqa: F401  - registriert die Tabellen an Base
+    from app import models  # noqa: F401  - registriert die Tabellen an Base
 
     Base.metadata.create_all(engine)
     _upgrade_legacy_schema()
@@ -111,7 +114,7 @@ def _encrypt_legacy_totp_secrets() -> None:
     angefasst - auch dann nicht, wenn sie mit einem anderen APP_SECRET erzeugt
     wurden. Sonst würde ein unlesbares Token ein zweites Mal verschlüsselt.
     """
-    from security import encrypt_secret
+    from app.security import encrypt_secret
 
     try:
         with engine.begin() as conn:

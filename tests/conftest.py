@@ -27,8 +27,8 @@ os.environ["SMTP_FROM"] = ""
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import app  # noqa: E402
-from database import Base, engine  # noqa: E402
-from ratelimit import limiter  # noqa: E402
+from app.db import Base, engine  # noqa: E402
+from app.ratelimit import limiter  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

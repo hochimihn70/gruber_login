@@ -18,12 +18,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from cryptography.fernet import Fernet, InvalidToken
 
-from config import (
-    MAX_PASSWORD_LENGTH,
-    MIN_PASSWORD_LENGTH,
-    OTP_CODE_RANGE,
-    SESSION_LIFETIME_DAYS,
-)
+from app import config
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +34,7 @@ _secret_lock = threading.Lock()
 
 
 # --- Server-Geheimnis -----------------------------------------------------------------------
+
 
 def app_secret() -> bytes:
     """Server-Geheimnis aus APP_SECRET.
@@ -64,7 +60,7 @@ def app_secret() -> bytes:
                 logger.warning(
                     "Kein APP_SECRET gesetzt - es wurde ein zufälliges Geheimnis erzeugt. "
                     "Vorhandene TOTP-Secrets überleben keinen Neustart. "
-                    "Eigenen Wert erzeugen: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+                    'Eigenen Wert erzeugen: python3 -c "import secrets; print(secrets.token_hex(32))"'
                 )
     return _app_secret
 
@@ -95,16 +91,17 @@ def _fernet() -> Fernet:
 
 # --- Passwörter -----------------------------------------------------------------------------
 
+
 def password_error(password: str) -> str | None:
     """Serverseitige Passwort-Regel. None = in Ordnung.
 
     Der Browser prüft dasselbe, aber darauf darf man sich nicht verlassen:
     Ein Aufruf per curl umgeht jede Frontend-Validierung.
     """
-    if len(password) < MIN_PASSWORD_LENGTH:
-        return f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben."
-    if len(password) > MAX_PASSWORD_LENGTH:
-        return f"Das Passwort darf höchstens {MAX_PASSWORD_LENGTH} Zeichen haben."
+    if len(password) < config.MIN_PASSWORD_LENGTH:
+        return f"Das Passwort muss mindestens {config.MIN_PASSWORD_LENGTH} Zeichen haben."
+    if len(password) > config.MAX_PASSWORD_LENGTH:
+        return f"Das Passwort darf höchstens {config.MAX_PASSWORD_LENGTH} Zeichen haben."
     return None
 
 
@@ -126,6 +123,7 @@ def burn_password_check(password: str) -> None:
 
 # --- Session-Tokens -------------------------------------------------------------------------
 
+
 def new_session_token() -> tuple[str, str]:
     """(Cookie-Wert, DB-Wert). In der DB liegt nur der SHA-256-Hash."""
     token = secrets.token_hex(32)
@@ -137,10 +135,10 @@ def hash_token(token: str) -> str:
 
 
 def session_expiry(now: datetime) -> datetime:
-    return now + timedelta(days=SESSION_LIFETIME_DAYS)
+    return now + timedelta(days=config.SESSION_LIFETIME_DAYS)
 
 
 def generate_otp() -> str:
     """Zufälliger Code mit OTP_LENGTH Ziffern (z. B. 6-stellig)."""
-    low, high = OTP_CODE_RANGE
+    low, high = config.OTP_CODE_RANGE
     return str(secrets.randbelow(high - low) + low)

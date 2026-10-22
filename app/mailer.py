@@ -10,7 +10,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from config import OTP_PURPOSES, smtp_config, smtp_is_configured, smtp_missing_keys
+from app import config
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,11 @@ def send_otp_email(to_email: str, otp_code: str, purpose: str = "2fa") -> bool:
     True  = verschickt
     False = nicht verschickt (Dev-Modus oder Versandfehler)
     """
-    cfg = smtp_config()
+    cfg = config.smtp_config()
     title = "Dein Verifizierungscode" if purpose == "2fa" else "Passwort zurücksetzen"
-    validity_minutes = OTP_PURPOSES[purpose]
+    validity_minutes = config.OTP_PURPOSES[purpose]
 
-    if not smtp_is_configured():
+    if not config.smtp_is_configured():
         # Bewusst nur im Dev-Modus: mit echtem SMTP gehört der Code nicht ins Log.
         logger.info("[DEV] %s für %s: %s", title, to_email, otp_code)
         return False
@@ -86,8 +86,8 @@ def _build_message(sender: str, to_email: str, title: str, otp_code: str, validi
 
 def log_startup_status() -> None:
     """Beim Start einmal ausgeben, ob der Mailversand aktiv ist."""
-    if smtp_is_configured():
-        cfg = smtp_config()
+    if config.smtp_is_configured():
+        cfg = config.smtp_config()
         logger.info(
             "[SMTP] E-Mail-Versand: AKTIV (Host: %s, Port: %s, Absender: %s)",
             cfg["host"],
@@ -97,5 +97,5 @@ def log_startup_status() -> None:
     else:
         logger.warning(
             "[SMTP] E-Mail-Versand: DEAKTIVIERT -> Dev-Modus. Fehlende Variablen: %s",
-            ", ".join(smtp_missing_keys()) or "keine",
+            ", ".join(config.smtp_missing_keys()) or "keine",
         )

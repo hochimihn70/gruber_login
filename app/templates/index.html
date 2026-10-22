@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gruber Login</title>
+  <link rel="stylesheet" href="/static/style.css?v=10">
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <span class="brand-mark" aria-hidden="true">GL</span>
+      <span class="brand-text">
+        <span class="brand-name">Gruber Login</span>
+        <span class="brand-tagline">Sichere Anmeldung mit Zwei-Faktor</span>
+      </span>
+    </header>
+
+    <section class="card">
+      <div id="alert" class="alert" role="status" hidden></div>
+
+      <!-- ================= Anmelden ================= -->
+      <div class="view" data-view="login">
+        <h1>Anmelden</h1>
+        <p class="lead">Willkommen zurück. Bitte melde dich mit deinem Konto an.</p>
+
+        <form id="login-form" novalidate>
+          <div class="field">
+            <label for="login-email">E-Mail</label>
+            <input id="login-email" type="email" autocomplete="email" inputmode="email"
+                   placeholder="name@beispiel.de" required>
+          </div>
+          <div class="field">
+            <label for="login-password">Passwort</label>
+            <input id="login-password" type="password" autocomplete="current-password"
+                   placeholder="Dein Passwort" required>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Anmelden</button>
+        </form>
+
+        <p class="helper">
+          <button type="button" class="link" data-action="show-forgot">Passwort vergessen?</button>
+        </p>
+
+        <div class="divider"><span>oder</span></div>
+
+        <button type="button" class="btn btn-secondary btn-block" data-action="show-register">
+          Konto erstellen
+        </button>
+      </div>
+
+      <!-- ================= Registrieren ================= -->
+      <div class="view" data-view="register" hidden>
+        <h1>Konto erstellen</h1>
+        <p class="lead">E-Mail und Passwort wählen – den zweiten Faktor kannst du gleich mitschützen.</p>
+
+        <form id="register-form" novalidate>
+          <div class="field">
+            <label for="register-email">E-Mail</label>
+            <input id="register-email" type="email" autocomplete="email" inputmode="email"
+                   placeholder="name@beispiel.de" required>
+          </div>
+          <div class="field">
+            <label for="register-password">Passwort</label>
+            <input id="register-password" type="password" autocomplete="new-password"
+                   placeholder="Mindestens 8 Zeichen" minlength="8" required>
+          </div>
+          <div class="field">
+            <label for="register-password2">Passwort wiederholen</label>
+            <input id="register-password2" type="password" autocomplete="new-password"
+                   placeholder="Nochmal eingeben" required>
+          </div>
+
+          <fieldset class="choice">
+            <legend>Zweiter Faktor</legend>
+
+            <label class="choice-option">
+              <input type="radio" name="auth_method" value="password" checked>
+              <span>
+                <strong>Nur Passwort</strong>
+                <small>Einfachster Weg – ein Faktor reicht.</small>
+              </span>
+            </label>
+
+            <label class="choice-option">
+              <input type="radio" name="auth_method" value="email_otp">
+              <span>
+                <strong>Code per E-Mail</strong>
+                <small>Bei jedem Login kommt ein 6-stelliger Code per Mail.</small>
+              </span>
+            </label>
+
+            <label class="choice-option">
+              <input type="radio" name="auth_method" value="totp">
+              <span>
+                <strong>Authenticator-App</strong>
+                <small>Sicherste Variante – QR-Code scannen, fertig.</small>
+              </span>
+            </label>
+          </fieldset>
+
+          <button type="submit" class="btn btn-primary btn-block">Konto erstellen</button>
+        </form>
+
+        <p class="helper center">
+          Schon ein Konto?
+          <button type="button" class="link" data-action="show-login">Anmelden</button>
+        </p>
+      </div>
+
+      <!-- ================= 2FA-Code ================= -->
+      <div class="view" data-view="twofactor" hidden>
+        <h1>Code bestätigen</h1>
+        <p id="twofactor-info" class="lead">Gib den 6-stelligen Code ein.</p>
+
+        <!-- Dev-Modus: kein SMTP konfiguriert -> Code wird direkt angezeigt -->
+        <div id="twofactor-dev" class="dev-box" hidden>
+          <p class="dev-title">Dev-Modus: kein E-Mail-Versand</p>
+          <p>Dein Bestätigungscode:</p>
+          <p class="dev-code"><code id="twofactor-dev-code">------</code></p>
+          <p class="dev-hint">Es wurde keine E-Mail verschickt – der Code steht auch im Server-Log.</p>
+        </div>
+
+        <form id="twofactor-form" novalidate>
+          <div class="field">
+            <label for="twofactor-code">6-stelliger Code</label>
+            <input id="twofactor-code" class="code-input" type="text" inputmode="numeric"
+                   autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}"
+                   placeholder="123456" required>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Bestätigen</button>
+        </form>
+
+        <p class="helper center">
+          <button type="button" class="link" data-action="show-login">Abbrechen</button>
+        </p>
+      </div>
+
+      <!-- ================= Authenticator einrichten ================= -->
+      <div class="view" data-view="totp" hidden>
+        <h1>Authenticator einrichten</h1>
+
+        <ol class="steps">
+          <li>Authenticator-App öffnen (Google Authenticator, Aegis, 2FAS …).</li>
+          <li>QR-Code scannen oder Schlüssel manuell eintragen.</li>
+          <li>Den angezeigten 6-stelligen Code hier bestätigen.</li>
+        </ol>
+
+        <div id="totp-qr" class="qr"></div>
+
+        <details class="secret">
+          <summary>Schlüssel manuell eingeben</summary>
+          <code id="totp-secret"></code>
+        </details>
+
+        <form id="totp-form" novalidate>
+          <div class="field">
+            <label for="totp-code">Code aus der App</label>
+            <input id="totp-code" class="code-input" type="text" inputmode="numeric"
+                   autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}"
+                   placeholder="123456" required>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Bestätigen &amp; anmelden</button>
+        </form>
+
+        <p class="helper center">
+          <button type="button" class="link" data-action="show-login">Später anmelden</button>
+        </p>
+      </div>
+
+      <!-- ================= Passwort vergessen ================= -->
+      <div class="view" data-view="forgot" hidden>
+        <h1>Passwort zurücksetzen</h1>
+
+        <div id="forgot-step-request">
+          <p class="lead">Wir senden dir einen 6-stelligen Code an deine E-Mail-Adresse.</p>
+          <form id="forgot-form" novalidate>
+            <div class="field">
+              <label for="forgot-email">E-Mail</label>
+              <input id="forgot-email" type="email" autocomplete="email" inputmode="email"
+                     placeholder="name@beispiel.de" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Code anfordern</button>
+          </form>
+        </div>
+
+        <div id="forgot-step-reset" hidden>
+          <p class="lead">Gib den Code aus der E-Mail und dein neues Passwort ein.</p>
+
+          <!-- Dev-Modus: kein SMTP konfiguriert -> Code wird direkt angezeigt -->
+          <div id="reset-dev" class="dev-box" hidden>
+            <p class="dev-title">Dev-Modus: kein E-Mail-Versand</p>
+            <p>Dein Reset-Code:</p>
+            <p class="dev-code"><code id="reset-dev-code">------</code></p>
+            <p class="dev-hint">Es wurde keine E-Mail verschickt – der Code steht auch im Server-Log.</p>
+          </div>
+
+          <form id="reset-form" novalidate>
+            <div class="field">
+              <label for="reset-code">Reset-Code</label>
+              <input id="reset-code" class="code-input" type="text" inputmode="numeric"
+                     autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}"
+                     placeholder="123456" required>
+            </div>
+            <div class="field">
+              <label for="reset-password">Neues Passwort</label>
+              <input id="reset-password" type="password" autocomplete="new-password"
+                     placeholder="Mindestens 8 Zeichen" minlength="8" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Passwort speichern</button>
+          </form>
+
+          <p class="helper">
+            <button type="button" class="link" data-action="forgot-restart">Andere E-Mail verwenden</button>
+          </p>
+        </div>
+
+        <p class="helper center">
+          <button type="button" class="link" data-action="show-login">Zurück zur Anmeldung</button>
+        </p>
+      </div>
+    </section>
+
+    <p class="footnote">Demo-Anwendung mit FastAPI · keine echten Daten</p>
+  </main>
+
+  <script src="/static/app.js?v=10"></script>
+</body>
+</html>

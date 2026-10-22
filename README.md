@@ -4,7 +4,7 @@ Kleine Login-Anwendung mit drei wählbaren Anmeldemodi, Session-Schutz, Passwort
 
 ## Funktionen
 
-- **Drei Login-Modi** (bei der Registrierung im zweiten Schritt wählbar):
+- **Drei Login-Modi** (bei der Registrierung direkt wählbar):
   - `password` – nur Passwort
   - `email_otp` – Passwort + 6-stelliger Code per E-Mail (10 Minuten gültig)
   - `totp` – Passwort + Authenticator-App (QR-Code, RFC 6238, z. B. Google Authenticator, Aegis, 2FAS)
@@ -45,11 +45,11 @@ Beim ersten Start legt die App die Tabellen `users`, `sessions` und `email_otps`
 
 ### Ausprobieren
 
-1. http://localhost:5000 öffnen und registrieren – zuerst E-Mail und Passwort, dann im zweiten Schritt entscheiden, ob das Konto zusätzlich abgesichert werden soll.
+1. http://localhost:5000 öffnen und registrieren – E-Mail, Passwort und direkt die gewünschte Sicherheitsstufe wählen.
 2. Je nach Modus:
    - **Passwort:** du wirst sofort eingeloggt und landest auf `/welcome`.
    - **E-Mail-Code:** Code eingeben. Ohne SMTP-Konfiguration steht er in den Logs **und wird direkt im Browser angezeigt** (siehe unten).
-   - **Authenticator:** QR-Code mit der App scannen, dann den angezeigten 6-stelligen Code eingeben.
+   - **Authenticator:** QR-Code mit der App scannen und den angezeigten 6-stelligen Code direkt bestätigen – damit ist das Konto eingerichtet und angemeldet.
 3. Beim nächsten Login wird je nach Modus der zweite Faktor abgefragt.
 
 ## Öffentlich erreichbar mit Cloudflare Tunnel (optional)
@@ -240,7 +240,7 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 | E-Mail-Prüfung | auch serverseitig (nicht nur im Browser) |
 | Sessions beim Passwort-Reset | alle bestehenden Sessions des Users werden beendet |
 | Sicherheits-Header | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy` |
-| CSP | `script-src 'self'` – kein Inline-JavaScript. Deshalb liegt der Code der Willkommensseite in `static/welcome.js` statt im HTML |
+| CSP | `script-src 'self'` – kein Inline-JavaScript. Deshalb liegt der Code der Landingpage in `app/static/app.js` und der Willkommensseite in `app/static/welcome.js` statt im HTML |
 | Container | Prozess läuft als Benutzer `app` (UID 10001), `cap_drop: ALL`, `no-new-privileges` |
 
 > **Hinweis zu Cloudflare:** Der Tunnel injiziert ein eigenes Script in die HTML-Ausgabe (Bot-Erkennung). Die strikte CSP blockiert es – die App ist davon nicht betroffen. Falls es doch nötig wird: `script-src 'self' 'unsafe-inline'`.
@@ -249,7 +249,7 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 
 Die HTML-Seiten werden mit `Cache-Control: no-cache` ausgeliefert: Der Browser fragt damit bei jedem Aufruf nach, ob sich etwas geändert hat, und lädt die Seite notfalls neu. Ohne diese Angabe würde der Browser eine alte Kopie behalten – und damit auch eine alte `app.js` mit altem Code.
 
-Die statischen Dateien selbst (`app.js`, `style.css`) bekommen die Versionsnummer direkt in der URL (`app.js?v=9`). Wird eine davon geändert, zählt man die Nummer in `templates/index.html` hoch – dann ist der neue Stand garantiert geladen.
+Die statischen Dateien selbst (`app.js`, `style.css`) bekommen die Versionsnummer direkt in der URL (`app.js?v=10`). Wird eine davon geändert, zählt man die Nummer in `app/templates/index.html` (bzw. `welcome.html`) hoch – dann ist der neue Stand garantiert geladen.
 
 ### 6. Was in der Datenbank steht – und was nicht
 
@@ -336,44 +336,115 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 | Registrierung schlägt mit „E-Mail ist bereits registriert" fehl | Die E-Mail existiert schon, das Passwort passt aber nicht. Mit dem **richtigen** Passwort kann die Sicherheitsstufe geändert werden – oder man meldet sich normal an bzw. setzt das Passwort zurück. |
 | Authenticator-Code wird abgelehnt | Uhrzeit von Server und Handy synchronisieren (Toleranz: ±30 Sekunden). |
 | Login meldet „zu dieser Uhrzeit gesperrt" | `LOGIN_RESTRICTION_ENABLED=false` setzen oder die erlaubten Stunden anpassen. |
-| Änderungen an `static/app.js` greifen nicht | Die Script-URL enthält eine Versionsnummer in `templates/index.html` – nach einer Änderung dort hochzählen (z. B. `app.js?v=9`). Das HTML selbst wird mit `Cache-Control: no-cache` immer neu validiert, der Browser holt sich also zuverlässig die neue Version. |
+| Änderungen an `app/static/app.js` greifen nicht | Die Script-URL enthält eine Versionsnummer in `app/templates/index.html` – nach einer Änderung dort hochzählen (z. B. `app.js?v=11`). Das HTML selbst wird mit `Cache-Control: no-cache` immer neu validiert, der Browser holt sich also zuverlässig die neue Version. |
 
 ## Architektur
 
-- **FastAPI** (`app.py`) liefert die Seiten aus `templates/` und die API unter `/api/*`; statische Dateien liegen in `static/`.
+- **FastAPI** (`app/__init__.py`) liefert die Landingpage, die API unter `/api/*` und die statischen Dateien.
 - **MySQL 8.4** speichert Benutzer (`users`), Sessions (`sessions`) und temporäre Codes (`email_otps`).
 - **Passwörter:** Argon2id auf dem Server, mit zufälligem Salt pro User – aus der Datenbank lässt sich ein Passwort nicht zurückrechnen.
 - **Cloudflared** stellt die Verbindung über den Cloudflare Tunnel her (keine offenen Ports nötig).
 
-### Dateien
+### Projektstruktur
 
-| Datei | Aufgabe |
-|---|---|
-| `app.py` | FastAPI-App: Sicherheits-Header und die Endpunkte |
-| `auth.py` | gemeinsame Abläufe: Sessions, E-Mail-Codes, TOTP inkl. Replay-Schutz |
-| `ratelimit.py` | In-Memory-Limiter (gleitendes Zeitfenster) |
-| `responses.py` | einheitliche Fehlerantworten (`error`, `too_many_requests`) |
-| `security.py` | Argon2id, HMAC, Verschlüsselung, Passwort-Regeln |
-| `mailer.py` | SMTP-Versand und Dev-Modus (Code nur im Log) |
-| `config.py` | Grenzwerte und Umgebungsvariablen an einer Stelle |
-| `database.py` | Engine, Session-Context-Manager, Schema-Upgrade |
-| `models.py` | Tabellen `users`, `sessions`, `email_otps` |
+```text
+gruber_login/
+├── app/                     # die Anwendung (ein Python-Paket)
+│   ├── __init__.py          # App-Factory, Middleware, Fehler-Handler
+│   ├── config.py            # Grenzwerte und Umgebungsvariablen
+│   ├── db.py                # Engine, Session-Dependency, Schema-Upgrade
+│   ├── models.py            # Tabellen users, sessions, email_otps
+│   ├── schemas.py           # Request-Bodies (Pydantic)
+│   ├── errors.py            # AppError / RateLimited
+│   ├── validation.py        # E-Mail normalisieren und prüfen
+│   ├── security.py          # Argon2id, HMAC, Verschlüsselung
+│   ├── mailer.py            # SMTP-Versand und Dev-Modus
+│   ├── ratelimit.py         # In-Memory-Limiter (gleitendes Fenster)
+│   ├── routers/             # HTTP-Schicht
+│   │   ├── pages.py         # / und /welcome
+│   │   ├── auth.py          # register, login, verify-2fa, logout
+│   │   ├── password.py      # forgot-password, reset-password
+│   │   └── system.py        # health, me
+│   ├── services/            # Fachlogik ohne HTTP
+│   │   ├── accounts.py      # registrieren / Passwort prüfen
+│   │   ├── sessions.py      # Sessions und Login-Abschluss
+│   │   ├── email_otp.py     # E-Mail-Codes (2FA, Reset)
+│   │   ├── totp.py          # Authenticator-App inkl. QR-Code
+│   │   └── throttling.py    # IP-Erkennung und Rate-Limits
+│   ├── templates/           # index.html (Landingpage), welcome.html
+│   └── static/              # style.css, app.js, welcome.js
+├── tests/                   # pytest, eigene SQLite-Datei
+├── docs/                    # PDFs, HTML-Quellen (src/) und build_pdfs.sh
+├── Dockerfile
+├── docker-compose.yml
+└── requirements*.txt
+```
 
-Die Trennung ist bewusst flach: keine Service-Klassen, keine Vererbungshierarchie –
-nur Module mit klaren Aufgaben. `app.py` enthält deshalb nur noch die Routen.
+Die Aufteilung folgt einer einfachen Regel: **Router** kennen HTTP, **Services**
+kennen die Regeln, **Module** wie `security.py` oder `db.py` kennen nur ihr Thema.
+Fehler wirft die Fachlogik als `AppError`; ein zentraler Handler macht daraus JSON.
+Deshalb gibt es in den Routern weder `try/except` noch `JSONResponse`-Gebäude für
+Fehlerfälle.
+
+### Code-Tour: ein Login von vorne bis hinten
+
+Wer den Code lesen will, muss nicht alles auf einmal ansehen – eine Anfrage
+reicht, um das Muster zu verstehen:
+
+| Schritt | Datei | Aufgabe |
+|---|---|---|
+| 1 | `app/routers/auth.py` → `login()` | Request lesen, Rate-Limit prüfen, Service aufrufen |
+| 2 | `app/services/accounts.py` → `authenticate()` | Konto suchen, Argon2id-Hash prüfen |
+| 3 | `app/services/sessions.py` → `complete_login()` | Session anlegen, Cookie setzen |
+| 4 | `app/models.py` | Tabelle `sessions`, in der der Token-Hash liegt |
+| 5 | `app/routers/pages.py` → `welcome_page()` | Cookie gegen die Datenbank prüfen |
+
+Für die anderen Abläufe gilt dasselbe Muster:
+
+- **2FA:** `app/services/email_otp.py` (Code per Mail) oder `app/services/totp.py`
+  (Authenticator-App inklusive QR-Code und Replay-Schutz)
+- **Passwort vergessen:** `app/routers/password.py` → `app/services/email_otp.py`
+- **Fehler:** Services werfen `AppError` (`app/errors.py`), der Handler in
+  `app/__init__.py` macht daraus JSON. Deshalb gibt es in den Routern keine
+  Fehler-Baupläne.
+
+### Oberfläche
+
+`/` ist eine einzige Landingpage mit fünf Ansichten (Anmelden, Konto erstellen,
+Code bestätigen, Authenticator einrichten, Passwort zurücksetzen). Umgeschaltet
+wird per `hidden`-Attribut in `app/static/app.js` – ohne Framework und ohne
+Inline-JavaScript, damit die strikte CSP gilt. Beim Registrieren mit
+Authenticator-App zeigt die Seite direkt den QR-Code; der erste Code aus der App
+bestätigt die Einrichtung und meldet gleichzeitig an.
 
 ### Tests
 
 ```bash
 pip install -r requirements-dev.txt
-pytest          # 27 Tests, laufen gegen eine temporäre SQLite-Datei
+pytest          # 30 Tests, laufen gegen eine temporäre SQLite-Datei
 ruff check .    # Stil- und Import-Prüfung
 ```
 
 Die Tests decken Registrierung, Login, Session, E-Mail-2FA, TOTP inkl.
 Replay-Schutz, Passwort-Reset, die serverseitige Passwortregel, alle
-Rate-Limits und die Migration alter Datenbestände ab. Sie brauchen weder
-MySQL noch einen Mailserver.
+Rate-Limits, die Migration alter Datenbestände und die Auslieferung der
+Landingpage ab. Sie brauchen weder MySQL noch einen Mailserver.
+
+### Dokumente (`docs/`)
+
+| Datei | Inhalt |
+|---|---|
+| `Projektdokumentation_Gruber_Login.pdf` | Aufbau, Abläufe, Sicherheit, Tests (5 Seiten) |
+| `Sprechskript_Gruber_Login.pdf` | Vortrag in zwei Teilen, ca. 8–10 Minuten (4 Seiten) |
+| `src/*.html`, `src/print.css` | Quellen der beiden PDFs |
+| `build_pdfs.sh` | baut beide PDFs mit Chrome/Chromium |
+
+```bash
+./docs/build_pdfs.sh    # braucht nur Chrome oder Chromium, kein LaTeX/Office
+```
+
+Die PDFs werden also nicht von Hand gepflegt: Inhalt in `docs/src/*.html`
+ändern, Skript ausführen, fertig.
 
 ### Konfigurations-Ebenen
 

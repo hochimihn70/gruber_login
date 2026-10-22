@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Projektdokumentation Gruber Login</title>
+  <link rel="stylesheet" href="print.css">
+</head>
+<body>
+
+<header class="doc-head">
+  <p class="eyebrow">Projektdokumentation</p>
+  <h1>Gruber Login</h1>
+  <p class="subtitle">Login-Anwendung mit FastAPI, MySQL und Docker</p>
+  <p class="meta">Stand: 22. Oktober 2026</p>
+</header>
+
+<h2>1. Ziel des Projekts</h2>
+<p>
+  Eine Webanwendung für Registrierung und Anmeldung, bei der Nutzer selbst
+  wählen, wie stark ihr Login abgesichert ist. Das Projekt zeigt den Umgang mit
+  Passwort-Hashing, Zwei-Faktor-Authentifizierung, Sessions und
+  containerisiertem Betrieb. Der Code bleibt bewusst klein und ist in klar
+  getrennte Module aufgeteilt, damit jeder Ablauf nachvollziehbar ist.
+</p>
+
+<h2>2. Funktionsumfang</h2>
+<table>
+  <thead><tr>
+    <th style="width: 24%">Modus</th>
+    <th>Ablauf</th>
+  </tr></thead>
+  <tr>
+    <td>Passwort</td>
+    <td>E-Mail und Passwort, danach direkt angemeldet.</td>
+  </tr>
+  <tr>
+    <td>E-Mail-Code</td>
+    <td>Passwort und sechsstelliger Code per E-Mail (10 Minuten gültig).</td>
+  </tr>
+  <tr>
+    <td>Authenticator (TOTP)</td>
+    <td>
+      Passwort und Code aus einer Authenticator-App. Einrichtung per QR-Code
+      (RFC 6238); der erste Code bestätigt die Einrichtung und meldet direkt an.
+    </td>
+  </tr>
+</table>
+
+<p>Weitere Funktionen:</p>
+<ul>
+  <li>Landingpage mit fünf Ansichten: Anmelden, Konto erstellen, Code bestätigen, Authenticator einrichten, Passwort zurücksetzen.</li>
+  <li>Geschützte Willkommensseite (<code>/welcome</code>) mit Sitzungsdaten und Abmeldung.</li>
+  <li>Passwort-Reset per E-Mail-Code (15 Minuten gültig).</li>
+  <li>Schutz vor Durchprobieren: begrenzte Fehlversuche, Rate-Limits pro IP und E-Mail, TOTP-Replay-Schutz.</li>
+  <li>Optionale zeitliche Login-Beschränkung, zum Beispiel 6 bis 22 Uhr.</li>
+  <li>30 automatisierte Tests und eine Lint-Prüfung mit ruff.</li>
+</ul>
+
+<h2>3. Technischer Aufbau</h2>
+<table>
+  <thead><tr>
+    <th style="width: 18%">Komponente</th>
+    <th style="width: 40%">Technik</th>
+    <th>Aufgabe</th>
+  </tr></thead>
+  <tr>
+    <td>Backend</td>
+    <td>Python, FastAPI, SQLAlchemy (<code>app/</code>)</td>
+    <td>Seiten ausliefern, API, Sessions und Fachlogik</td>
+  </tr>
+  <tr>
+    <td>Frontend</td>
+    <td>HTML, CSS, JavaScript (<code>app/templates/</code>, <code>app/static/</code>)</td>
+    <td>Landingpage, Formulare, QR-Code-Anzeige</td>
+  </tr>
+  <tr>
+    <td>Datenbank</td>
+    <td>MySQL 8.4</td>
+    <td>Tabellen <code>users</code>, <code>sessions</code>, <code>email_otps</code></td>
+  </tr>
+  <tr>
+    <td>Zugang</td>
+    <td>Cloudflare Tunnel (cloudflared)</td>
+    <td>HTTPS ohne Portfreigabe</td>
+  </tr>
+  <tr>
+    <td>Betrieb</td>
+    <td>Docker Compose</td>
+    <td>Start mit <code>docker compose up -d --build db web</code></td>
+  </tr>
+</table>
+
+<p>Das Backend ist ein Python-Paket. Jede Datei hat eine Aufgabe:</p>
+<pre>app/
+├── __init__.py        App-Factory, Sicherheits-Header, Fehler-Handler
+├── config.py          Grenzwerte, Umgebungsvariablen, SMTP
+├── db.py              Engine, Session pro Request, Schema-Upgrade
+├── models.py          Tabellen users, sessions, email_otps
+├── security.py        Argon2id, HMAC, Verschlüsselung
+├── mailer.py          SMTP-Versand oder Dev-Modus
+├── ratelimit.py       In-Memory-Limiter (gleitendes Fenster)
+├── schemas.py         Request-Bodies (Pydantic)
+├── errors.py          AppError / RateLimited
+├── validation.py      E-Mail normalisieren und prüfen
+├── routers/           HTTP-Schicht: pages, auth, password, system
+├── services/          Regeln: accounts, sessions, email_otp, totp, throttling
+├── templates/         index.html, welcome.html
+└── static/            style.css, app.js, welcome.js</pre>
+
+<p>
+  Die Aufteilung folgt einer einfachen Regel: <strong>Router</strong> kennen HTTP,
+  <strong>Services</strong> kennen die Regeln, <strong>Basismodule</strong> wie
+  <code>config.py</code> oder <code>security.py</code> kennen nur ihr Thema.
+  Fehler wirft die Fachlogik als <code>AppError</code>; ein zentraler Handler in
+  <code>app/__init__.py</code> macht daraus eine JSON-Antwort.
+</p>
+
+<h2>4. Ablauf der Anmeldung</h2>
+<ol>
+  <li>Der Browser sendet E-Mail und Passwort als JSON an <code>POST /api/login</code>. Die Übertragung erfolgt über HTTPS.</li>
+  <li>Der Server sucht das Konto und prüft das Passwort gegen den gespeicherten Argon2id-Hash. Bei unbekannter E-Mail wird ein Dummy-Hash gerechnet, damit die Antwortzeit nichts verrät.</li>
+  <li>Ist der Modus „Passwort“, wird direkt eine Session angelegt. Sonst antwortet der Server mit <code>2fa_required</code>.</li>
+  <li>Der zweite Faktor wird über <code>POST /api/verify-2fa</code> geprüft: E-Mail-Code oder TOTP-Code aus der App.</li>
+  <li>Nach erfolgreicher Prüfung entsteht ein zufälliger Session-Token. In der Datenbank liegt nur sein SHA-256-Hash, im Browser ein <code>HttpOnly</code>-Cookie mit sieben Tagen Laufzeit.</li>
+  <li><code>/welcome</code> prüft das Cookie bei jedem Aufruf gegen die Datenbank. Ohne gültige Session wird zurück zur Startseite geleitet.</li>
+</ol>
+
+<div class="note">
+  <strong>Registrierung mit Authenticator-App:</strong> Der Server erzeugt ein
+  TOTP-Secret, verschlüsselt es für die Datenbank und liefert ein SVG mit dem
+  QR-Code. Die Landingpage zeigt den Code an; der erste Code aus der App
+  bestätigt die Einrichtung und meldet gleichzeitig an.
+</div>
+
+<h2>5. Schnittstellen</h2>
+<table>
+  <thead><tr>
+    <th style="width: 12%">Methode</th>
+    <th style="width: 34%">Pfad</th>
+    <th>Zweck</th>
+  </tr></thead>
+  <tr><td>GET</td><td><code>/</code></td><td>Landingpage mit allen Ansichten</td></tr>
+  <tr><td>GET</td><td><code>/welcome</code></td><td>Geschützter Bereich (Weiterleitung ohne Session)</td></tr>
+  <tr><td>GET</td><td><code>/api/health</code></td><td>Status von Datenbank und SMTP-Konfiguration</td></tr>
+  <tr><td>GET</td><td><code>/api/me</code></td><td>Daten des angemeldeten Benutzers</td></tr>
+  <tr><td>POST</td><td><code>/api/register</code></td><td>Registrieren mit Modusauswahl</td></tr>
+  <tr><td>POST</td><td><code>/api/login</code></td><td>Login Schritt 1 (Passwort)</td></tr>
+  <tr><td>POST</td><td><code>/api/verify-2fa</code></td><td>Login Schritt 2 (E-Mail- oder TOTP-Code)</td></tr>
+  <tr><td>POST</td><td><code>/api/forgot-password</code></td><td>Reset-Code anfordern</td></tr>
+  <tr><td>POST</td><td><code>/api/reset-password</code></td><td>Neues Passwort mit Reset-Code setzen</td></tr>
+  <tr><td>POST</td><td><code>/api/logout</code></td><td>Abmelden und Session beenden</td></tr>
+</table>
+<p class="meta">
+  Fehlerfälle: 400 (Eingabe falsch), 401 (Zugangsdaten falsch), 403 (Login
+  zeitlich gesperrt), 429 (zu viele Versuche, inklusive <code>Retry-After</code>),
+  500 (Serverfehler).
+</p>
+
+<h2>6. Passwort-Hashing</h2>
+<p>
+  Das Passwort geht über HTTPS an den Server und wird dort mit
+  <strong>Argon2id</strong> gehasht. Der Hash enthält das zufällige Salt und wird
+  in der Datenbank gespeichert; das Klartext-Passwort wird nirgends abgelegt.
+</p>
+<table>
+  <thead><tr><th style="width: 34%">Eigenschaft</th><th>Wert</th></tr></thead>
+  <tr><td>Verfahren</td><td>Argon2id (<code>$argon2id$v=19$…</code>)</td></tr>
+  <tr><td>Speicher</td><td>46 MiB (47104 KiB)</td></tr>
+  <tr><td>Durchläufe / Threads</td><td>1 / 1</td></tr>
+  <tr><td>Salt</td><td>zufällig pro Hash, im Hash-String enthalten</td></tr>
+  <tr><td>Dauer</td><td>ca. 50 ms pro Prüfung</td></tr>
+</table>
+
+<h3>Warum nicht im Browser hashen?</h3>
+<p>
+  Ein Hash aus dem Browser ist selbst wieder ein vollwertiges Passwort: Wer ihn
+  abfängt, kann sich damit direkt anmelden („Pass-the-Hash“). Ein einzelnes
+  SHA-256 wäre außerdem viel zu schnell berechnet. Deshalb rechnet der Server –
+  geschützt durch HTTPS – und verwendet mit Argon2id ein absichtlich langsames,
+  speicherresistentes Verfahren. Das entspricht der OWASP-Empfehlung.
+</p>
+
+<h2>7. Sicherheit</h2>
+<table>
+  <thead><tr><th style="width: 34%">Maßnahme</th><th>Umsetzung</th></tr></thead>
+  <tr><td>Passwörter</td><td>Argon2id, zufälliges Salt, mindestens 8 Zeichen (serverseitig geprüft)</td></tr>
+  <tr><td>Session-Cookie</td><td><code>HttpOnly</code>, <code>SameSite=Lax</code>, <code>Secure</code> (abschaltbar für lokale Tests), 7 Tage</td></tr>
+  <tr><td>Session-Token in der DB</td><td>nur als SHA-256-Hash – ein DB-Leak reicht nicht zur Übernahme</td></tr>
+  <tr><td>E-Mail-Codes</td><td>nur als HMAC-Signatur mit <code>APP_SECRET</code> gespeichert</td></tr>
+  <tr><td>TOTP-Secret</td><td>verschlüsselt (Fernet/AES-GCM), Schlüssel aus <code>APP_SECRET</code></td></tr>
+  <tr><td>Kontoübernahme</td><td>Erneutes Registrieren ändert ein bestehendes Konto nur mit richtigem Passwort</td></tr>
+  <tr><td>Anti-Enumeration</td><td>gleiche Antwort bei unbekannter E-Mail; Dummy-Hash gleicht die Antwortzeit an</td></tr>
+  <tr><td>Header / CSP</td><td><code>X-Frame-Options</code>, <code>nosniff</code>, <code>Referrer-Policy</code>, <code>script-src 'self'</code></td></tr>
+  <tr><td>Container</td><td>Benutzer <code>app</code> (UID 10001), <code>cap_drop: ALL</code>, <code>no-new-privileges</code></td></tr>
+</table>
+
+<h3>Brute-Force-Bremsen</h3>
+<table>
+  <thead><tr><th style="width: 40%">Vorgang</th><th>Regel</th></tr></thead>
+  <tr><td>E-Mail-Code / Reset-Code</td><td>nach 5 Fehlversuchen wird der Code ungültig (429)</td></tr>
+  <tr><td>TOTP-Code</td><td>nach 5 Fehlversuchen 15 Minuten gesperrt; jeder Zeitschritt nur einmal gültig</td></tr>
+  <tr><td>Login</td><td>20 Versuche / 15 min pro IP, 10 / 15 min pro E-Mail</td></tr>
+  <tr><td>Registrierung</td><td>10 Versuche / Stunde pro IP</td></tr>
+  <tr><td>Passwort-Reset</td><td>5 Anfragen / 15 min pro IP, 2 / Stunde pro E-Mail</td></tr>
+  <tr><td>Code-Prüfung</td><td>30 Versuche / 15 min pro IP</td></tr>
+</table>
+<p class="meta">
+  Der Limiter liegt im Speicher und gilt pro Prozess. Für mehrere Worker müsste
+  der Zustand geteilt werden (zum Beispiel über Redis).
+</p>
+
+<h2>8. Tests und Werkzeuge</h2>
+<p>
+  Die Testsuite läuft gegen eine temporäre SQLite-Datei und braucht weder MySQL
+  noch einen Mailserver:
+</p>
+<pre>pip install -r requirements-dev.txt
+pytest          # 30 Tests
+ruff check .    # Stil- und Import-Prüfung</pre>
+<p>
+  Abgedeckt sind Registrierung, Login, Sessions, E-Mail-2FA, TOTP inklusive
+  Replay-Schutz, Passwort-Reset, die serverseitige Passwortregel, alle
+  Rate-Limits, die Migration alter Datenbestände und die Auslieferung der
+  Landingpage.
+</p>
+
+<h2>9. Inbetriebnahme</h2>
+<ol>
+  <li><code>cp .env.example .env</code> und bei Bedarf SMTP sowie <code>APP_SECRET</code> eintragen.</li>
+  <li><code>docker compose up -d --build db web</code> startet Datenbank und Anwendung.</li>
+  <li>Die Anwendung ist unter <code>http://localhost:5000</code> erreichbar.</li>
+  <li>Für den öffentlichen Zugang das Cloudflare-Tunnel-Token eintragen und mit <code>--profile tunnel</code> starten.</li>
+</ol>
+<p>
+  Ohne SMTP-Konfiguration läuft die App im Dev-Modus: Der Code wird dann direkt
+  auf der Seite angezeigt und zusätzlich ins Log geschrieben
+  (<code>docker compose logs web</code>). Die ausführliche Anleitung steht in der
+  <code>README.md</code>.
+</p>
+
+<h2>10. Ressourcenbedarf</h2>
+<p>
+  Schätzwerte, nicht gemessen: insgesamt etwa 0,5–0,8 GB Arbeitsspeicher
+  (MySQL ca. 400–600 MB, Web ca. 60–100 MB, cloudflared ca. 20–50 MB),
+  praktisch keine CPU-Last im Leerlauf, ca. 1 GB für die Images. Empfohlen sind
+  1 vCPU und 2 GB RAM.
+</p>
+
+<h2>11. Bekannte Einschränkungen und nächste Schritte</h2>
+<ul>
+  <li>Der Rate-Limiter zählt pro Prozess; mehrere Worker bräuchten einen gemeinsamen Speicher (Redis).</li>
+  <li>Schema-Änderungen passieren beim Start; für echte Migrationen wäre Alembic der nächste Schritt.</li>
+  <li>Im Dev-Modus stehen Codes im Klartext im Log – praktisch für die Demo, nicht für den Produktivbetrieb.</li>
+  <li>Die optionale Zeitsperre nutzt die Serverzeit des Containers (standardmäßig UTC).</li>
+  <li>Es gibt noch keine Wiederherstellungscodes für verlorene Authenticator-Geräte.</li>
+</ul>
+
+<h2>12. Aufgabenteilung</h2>
+<table>
+  <thead><tr><th style="width: 22%">Person</th><th>Vortragsteil</th></tr></thead>
+  <tr><td>Person A</td><td>Idee, technischer Aufbau, die drei Login-Modi</td></tr>
+  <tr><td>Person B</td><td>Ablauf, Sicherheit, Live-Demo, Fazit</td></tr>
+</table>
+
+</body>
+</html>

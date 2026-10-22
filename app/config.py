@@ -8,8 +8,15 @@ verdrahtet - hier stehen nur Namen, Grenzwerte und Defaults.
 import os
 import re
 from datetime import datetime
+from pathlib import Path
 
 APP_NAME = "Gruber Login"
+
+# Wo liegen Templates und statische Dateien? Im App-Paket, nicht im Projektwurzel.
+PACKAGE_DIR = Path(__file__).resolve().parent
+TEMPLATE_DIR = PACKAGE_DIR / "templates"
+STATIC_DIR = PACKAGE_DIR / "static"
+
 
 # --- Sessions -------------------------------------------------------------------------------
 SESSION_COOKIE_NAME = "session_token"
@@ -55,9 +62,7 @@ def database_url() -> str:
     """Datenbank-URL aus der Umgebung. Fehlt sie, soll die App sofort abbrechen."""
     url = os.environ.get("DATABASE_URL", "").strip()
     if not url:
-        raise RuntimeError(
-            "DATABASE_URL ist nicht gesetzt. Vorlage: .env.example (docker compose liest .env)."
-        )
+        raise RuntimeError("DATABASE_URL ist nicht gesetzt. Vorlage: .env.example (docker compose liest .env).")
     return url
 
 

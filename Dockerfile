@@ -10,9 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --chown=app:app *.py ./
-COPY --chown=app:app templates templates
-COPY --chown=app:app static static
+# Das komplette App-Paket inklusive Templates und statischer Dateien.
+COPY --chown=app:app app ./app
 
 USER app
 

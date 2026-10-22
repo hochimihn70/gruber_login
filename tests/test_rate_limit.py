@@ -6,8 +6,8 @@ import pyotp
 import pytest
 from helpers import login, register, request_reset, verify
 
-import config
-from ratelimit import SlidingWindowLimiter
+from app import config
+from app.ratelimit import SlidingWindowLimiter
 
 
 class FakeClock:

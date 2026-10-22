@@ -6,12 +6,13 @@ import pyotp
 from cryptography.fernet import Fernet
 from helpers import login, register, request_reset, reset, verify
 
-import database
-from database import db_session
-from models import User
-from security import decrypt_secret
+from app import db as app_db
+from app.db import db_session
+from app.models import User
+from app.security import decrypt_secret
 
 # --- Registrierung & Login ------------------------------------------------------------------
+
 
 def test_registrierung_loggt_direkt_ein(client):
     response = register(client)
@@ -58,6 +59,7 @@ def test_logout_beendet_die_session(client):
 
 # --- E-Mail-Code (2FA) ----------------------------------------------------------------------
 
+
 def test_email_code_führt_zum_login(client):
     response = register(client, method="email_otp")
     data = response.json()
@@ -85,6 +87,7 @@ def test_email_code_wird_nach_fünf_fehlversuchen_ungültig(client):
 
 
 # --- Authenticator-App (TOTP) ---------------------------------------------------------------
+
 
 def test_totp_einrichtung_und_login(client):
     response = register(client, method="totp")
@@ -118,6 +121,7 @@ def test_totp_secret_bleibt_bei_erneuter_registrierung_erhalten(client):
 
 # --- Passwort-Reset -------------------------------------------------------------------------
 
+
 def test_reset_setzt_passwort_und_beendet_alte_sessions(client):
     register(client)
     code = request_reset(client).json()["dev_code"]
@@ -149,8 +153,8 @@ def test_reset_verrät_keine_registrierten_mails(client):
 
 def test_reset_verrät_keinen_code_wenn_der_versand_fehlschlägt(client, monkeypatch):
     register(client)
-    monkeypatch.setattr("config.smtp_is_configured", lambda: True)
-    monkeypatch.setattr("app.send_otp_email", lambda *args, **kwargs: False)
+    monkeypatch.setattr("app.config.smtp_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.email_otp.send_otp_email", lambda *args, **kwargs: False)
 
     response = request_reset(client)
 
@@ -159,8 +163,8 @@ def test_reset_verrät_keinen_code_wenn_der_versand_fehlschlägt(client, monkeyp
 
 
 def test_2fa_verrät_keinen_code_wenn_der_versand_fehlschlägt(client, monkeypatch):
-    monkeypatch.setattr("config.smtp_is_configured", lambda: True)
-    monkeypatch.setattr("auth.send_otp_email", lambda *args, **kwargs: False)
+    monkeypatch.setattr("app.config.smtp_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.email_otp.send_otp_email", lambda *args, **kwargs: False)
 
     response = register(client, method="email_otp")
 
@@ -179,6 +183,7 @@ def test_reset_lehnt_kurzes_passwort_ab(client):
 
 # --- Status-Endpunkt ------------------------------------------------------------------------
 
+
 def test_health_zeigt_keine_smtp_zugangsdaten(client):
     data = client.get("/api/health").json()
 
@@ -189,6 +194,7 @@ def test_health_zeigt_keine_smtp_zugangsdaten(client):
 
 
 # --- Migration alter Datenbestände ----------------------------------------------------------
+
 
 def test_klartext_totp_secret_wird_verschlüsselt(client):
     with db_session() as db:
@@ -203,7 +209,7 @@ def test_klartext_totp_secret_wird_verschlüsselt(client):
         )
         db.commit()
 
-    database._encrypt_legacy_totp_secrets()
+    app_db._encrypt_legacy_totp_secrets()
 
     with db_session() as db:
         stored = db.query(User).filter_by(email="alt@example.com").one().totp_secret
@@ -226,7 +232,7 @@ def test_unlesbares_token_wird_nicht_doppelt_verschlüsselt(client):
         )
         db.commit()
 
-    database._encrypt_legacy_totp_secrets()
+    app_db._encrypt_legacy_totp_secrets()
 
     with db_session() as db:
         stored = db.query(User).filter_by(email="alt2@example.com").one().totp_secret

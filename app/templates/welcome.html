@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Geschützter Bereich · Gruber Login</title>
+  <link rel="stylesheet" href="/static/style.css?v=10">
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <span class="brand-mark" aria-hidden="true">GL</span>
+      <span class="brand-text">
+        <span class="brand-name">Gruber Login</span>
+        <span class="brand-tagline">Geschützter Bereich</span>
+      </span>
+    </header>
+
+    <section class="card">
+      <h1>Willkommen!</h1>
+      <p class="lead">Du bist angemeldet – diese Seite ist nur mit gültiger Session erreichbar.</p>
+
+      <div class="account">
+        <h2>Sitzung</h2>
+        <dl>
+          <div>
+            <dt>E-Mail</dt>
+            <dd id="user-email">…</dd>
+          </div>
+          <div>
+            <dt>Sicherheitsmethode</dt>
+            <dd id="user-method">…</dd>
+          </div>
+          <div>
+            <dt>Letzter Login</dt>
+            <dd id="user-last-login">…</dd>
+          </div>
+          <div>
+            <dt>Konto erstellt</dt>
+            <dd id="user-created">…</dd>
+          </div>
+        </dl>
+      </div>
+
+      <button id="logout-btn" type="button" class="btn btn-primary btn-block">Abmelden</button>
+    </section>
+
+    <p class="footnote">Demo-Anwendung mit FastAPI · keine echten Daten</p>
+  </main>
+
+  <script src="/static/welcome.js?v=10"></script>
+</body>
+</html>

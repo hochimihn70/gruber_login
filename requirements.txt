@@ -1,6 +1,6 @@
 fastapi==0.115.6
 uvicorn==0.34.0
-SQLAlchemy==2.0.36
+SQLAlchemy==2.0.55
 PyMySQL==1.1.1
 argon2-cffi==25.1.0
 cryptography==44.0.0
