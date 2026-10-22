@@ -254,8 +254,7 @@ def register(request: Request, payload: RegisterRequest):
                 "auth_method": auth_method,
                 "totp_secret": totp_secret,
                 "qr_svg": qr_svg,
-            },
-            status_code=200,
+            }
         )
 
 
@@ -298,8 +297,7 @@ def login(request: Request, payload: LoginRequest):
                 "method": "totp",
                 "email": email,
                 "message": "Gib den 6-stelligen Code aus deiner Authenticator-App ein.",
-            },
-            status_code=200,
+            }
         )
 
 
@@ -352,7 +350,7 @@ def forgot_password(request: Request, payload: ForgotPasswordRequest):
     with db_session() as db:
         user = db.query(User).filter_by(email=email).first()
         if user is None:
-            return JSONResponse(generic, status_code=200)
+            return JSONResponse(generic)
 
         code = create_email_otp(db, email, "reset")
 
@@ -371,10 +369,9 @@ def forgot_password(request: Request, payload: ForgotPasswordRequest):
                 "message": f"Kein SMTP-Server konfiguriert (Dev-Modus) – dein Reset-Code lautet: {code}",
                 "dev_code": code,
                 "dev_mode": True,
-            },
-            status_code=200,
+            }
         )
-    return JSONResponse(generic, status_code=200)
+    return JSONResponse(generic)
 
 
 @app.post("/api/reset-password")
@@ -406,7 +403,7 @@ def reset_password(request: Request, payload: ResetPasswordRequest):
         db.query(SessionToken).filter_by(user_id=user.id).delete()
         db.commit()
 
-    return JSONResponse({"message": "Passwort erfolgreich geändert! Du kannst dich jetzt anmelden."}, status_code=200)
+    return JSONResponse({"message": "Passwort erfolgreich geändert! Du kannst dich jetzt anmelden."})
 
 
 @app.post("/api/logout")
@@ -417,6 +414,6 @@ def logout(request: Request):
             db.query(SessionToken).filter_by(token=hash_token(token)).delete()
             db.commit()
 
-    response = JSONResponse({"message": "Erfolgreich abgemeldet.", "redirect": "/"}, status_code=200)
+    response = JSONResponse({"message": "Erfolgreich abgemeldet.", "redirect": "/"})
     clear_session_cookie(response)
     return response

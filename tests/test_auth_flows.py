@@ -29,7 +29,7 @@ def test_passwortregel_gilt_auch_serverseitig(client):
     assert "mindestens 8" in response.json()["error"]
 
 
-def test_bestehendes_konto_bleibt_ohne_passwort_unveraendert(client):
+def test_bestehendes_konto_bleibt_ohne_passwort_unverändert(client):
     register(client)
 
     response = register(client, password="falschesPasswort1", method="email_otp")
@@ -58,7 +58,7 @@ def test_logout_beendet_die_session(client):
 
 # --- E-Mail-Code (2FA) ----------------------------------------------------------------------
 
-def test_email_code_fuehrt_zum_login(client):
+def test_email_code_führt_zum_login(client):
     response = register(client, method="email_otp")
     data = response.json()
     assert data["status"] == "2fa_required"
@@ -73,7 +73,7 @@ def test_email_code_fuehrt_zum_login(client):
     assert client.get("/api/me").json()["email"] == "test@example.com"
 
 
-def test_email_code_wird_nach_fuenf_fehlversuchen_ungueltig(client):
+def test_email_code_wird_nach_fünf_fehlversuchen_ungültig(client):
     code = register(client, method="email_otp").json()["dev_code"]
 
     for _ in range(5):
@@ -140,14 +140,14 @@ def test_reset_code_hat_dieselbe_brute_force_bremse(client):
     assert response.status_code == 429
 
 
-def test_reset_verraet_keine_registrierten_mails(client):
+def test_reset_verrät_keine_registrierten_mails(client):
     response = request_reset(client, email="niemand@example.com")
 
     assert response.status_code == 200
     assert "dev_code" not in response.json()
 
 
-def test_reset_verraet_keinen_code_wenn_der_versand_fehlschlaegt(client, monkeypatch):
+def test_reset_verrät_keinen_code_wenn_der_versand_fehlschlägt(client, monkeypatch):
     register(client)
     monkeypatch.setattr("config.smtp_is_configured", lambda: True)
     monkeypatch.setattr("app.send_otp_email", lambda *args, **kwargs: False)
@@ -158,7 +158,7 @@ def test_reset_verraet_keinen_code_wenn_der_versand_fehlschlaegt(client, monkeyp
     assert "dev_code" not in response.json()
 
 
-def test_2fa_verraet_keinen_code_wenn_der_versand_fehlschlaegt(client, monkeypatch):
+def test_2fa_verrät_keinen_code_wenn_der_versand_fehlschlägt(client, monkeypatch):
     monkeypatch.setattr("config.smtp_is_configured", lambda: True)
     monkeypatch.setattr("auth.send_otp_email", lambda *args, **kwargs: False)
 
@@ -190,7 +190,7 @@ def test_health_zeigt_keine_smtp_zugangsdaten(client):
 
 # --- Migration alter Datenbestände ----------------------------------------------------------
 
-def test_klartext_totp_secret_wird_verschluesselt(client):
+def test_klartext_totp_secret_wird_verschlüsselt(client):
     with db_session() as db:
         db.add(
             User(
@@ -212,7 +212,7 @@ def test_klartext_totp_secret_wird_verschluesselt(client):
     assert decrypt_secret(stored) == "JBSWY3DPEHPK3PXP"
 
 
-def test_unlesbares_token_wird_nicht_doppelt_verschluesselt(client):
+def test_unlesbares_token_wird_nicht_doppelt_verschlüsselt(client):
     fremdes_token = Fernet(Fernet.generate_key()).encrypt(b"altes-secret").decode()
     with db_session() as db:
         db.add(

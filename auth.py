@@ -186,7 +186,7 @@ def email_otp_challenge(db: Session, email: str) -> JSONResponse:
     sent = send_otp_email(email, code, "2fa")
     if config.smtp_is_configured() and not sent:
         return error("E-Mail konnte nicht gesendet werden.", status_code=500)
-    return JSONResponse(email_otp_payload(email, code, sent), status_code=200)
+    return JSONResponse(email_otp_payload(email, code, sent))
 
 
 def check_email_code(db: Session, email: str, purpose: str, code: str) -> JSONResponse | None:

@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Muss vor dem Import von app/config/database passieren.
 _TEST_DIR = tempfile.mkdtemp(prefix="gruber-login-tests-")
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DIR}/test.db"
-os.environ["APP_SECRET"] = "test-secret-nur-fuer-pytest"
+os.environ["APP_SECRET"] = "test-secret-nur-zum-testen"
 os.environ["SESSION_COOKIE_SECURE"] = "false"
 os.environ["LOGIN_RESTRICTION_ENABLED"] = "false"
 os.environ["RATE_LIMIT_ENABLED"] = "false"  # einzelne Tests aktivieren es gezielt

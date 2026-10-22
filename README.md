@@ -146,7 +146,7 @@ docker compose up -d --force-recreate web
 
 ## Sicherheitsregeln
 
-Drei Regeln, die den ganzen Login-Schutz ausmachen:
+Die wichtigsten Schutzmaßnahmen im Überblick:
 
 ### 1. Ein fremdes Konto kann nicht übernommen werden
 

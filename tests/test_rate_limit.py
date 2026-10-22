@@ -18,7 +18,7 @@ class FakeClock:
         return self.now
 
 
-def test_limiter_zaehlt_im_gleitenden_fenster():
+def test_limiter_zählt_im_gleitenden_fenster():
     clock = FakeClock()
     limiter = SlidingWindowLimiter(clock)
 
@@ -33,7 +33,7 @@ def test_limiter_zaehlt_im_gleitenden_fenster():
     assert limiter.hit("k", limit=2, window_seconds=60) is None
 
 
-def test_wait_time_zaehlt_nicht_mit():
+def test_wait_time_zählt_nicht_mit():
     limiter = SlidingWindowLimiter(FakeClock())
     limiter.hit("k", limit=1, window_seconds=60)
 
@@ -88,7 +88,7 @@ def test_reset_anfrage_wird_pro_mail_gebremst(client, aktives_limit, monkeypatch
     assert request_reset(client).status_code == 429
 
 
-def test_totp_wird_nach_fuenf_fehlversuchen_gebremst(client, aktives_limit, monkeypatch):
+def test_totp_wird_nach_fünf_fehlversuchen_gebremst(client, aktives_limit, monkeypatch):
     monkeypatch.setattr(config, "TOTP_LIMIT_PER_EMAIL", (5, 900))
     secret = register(client, method="totp").json()["totp_secret"]
     login(client)
