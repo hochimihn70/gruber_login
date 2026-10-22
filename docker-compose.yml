@@ -19,6 +19,10 @@ services:
     build: .
     environment:
       DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://authuser:authpassword@db:3306/authdb}
+      # Server-Geheimnis: wird für HMAC-Signaturen und die Verschlüsselung des
+      # TOTP-Secrets gebraucht. MUSS stabil bleiben, sonst sind vorhandene
+      # TOTP-Secrets nach einem Neustart nicht mehr entschlüsselbar.
+      APP_SECRET: ${APP_SECRET:-}
       # SMTP-Credentials kommen aus der .env (siehe .env.example).
       # Leere Werte = Dev-Modus: Codes werden dann direkt im Browser angezeigt.
       SMTP_HOST: ${SMTP_HOST:-}
@@ -32,9 +36,18 @@ services:
       LOGIN_RESTRICTION_ENABLED: ${LOGIN_RESTRICTION_ENABLED:-false}
       LOGIN_ALLOWED_START_HOUR: ${LOGIN_ALLOWED_START_HOUR:-6}
       LOGIN_ALLOWED_END_HOUR: ${LOGIN_ALLOWED_END_HOUR:-22}
+      # Rate-Limiting (Standard: an). X-Forwarded-For nur hinter einem Proxy auswerten.
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
     ports:
       - "5000:5000"
     restart: on-failure
+    # Der Prozess läuft im Image bereits als Benutzer "app" (UID 10001).
+    # Zusätzlich: keine zusätzlichen Kernel-Rechte, keine Privilegien-Eskalation.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       # Prueft, ob die App wirklich bereit ist (nicht nur, ob der Prozess laeuft).
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health', timeout=3)\" || exit 1"]

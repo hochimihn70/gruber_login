@@ -11,6 +11,7 @@ Kleine Login-Anwendung mit drei wählbaren Anmeldemodi, Session-Schutz, Passwort
 - **Passwort-Hashing mit Argon2id:** Das Passwort geht verschlüsselt (HTTPS) zum Server und wird dort mit Argon2id gehasht – inklusive zufälligem Salt pro User. Das ist der heutige Standard (OWASP) und läuft in Django, Rails, Laravel, Spring und Next.js genauso.
 - **Geschützte Route:** `/welcome` ist nur mit gültiger Session erreichbar, sonst Weiterleitung auf `/`. Die Session ist 7 Tage gültig (HttpOnly-Cookie).
 - **Passwort-Reset** per E-Mail-Code (15 Minuten gültig).
+- **Brute-Force-Schutz:** Fehlversuchs-Bremse für 2FA-/Reset-Codes, Rate-Limits pro IP und E-Mail, TOTP-Replay-Schutz.
 - **Zeitliche Login-Beschränkung** (optional, siehe unten).
 
 ## Voraussetzungen
@@ -36,7 +37,7 @@ Danach ist die App unter http://localhost:5000 erreichbar.
 >
 > **E-Mail ist optional:** Ohne `SMTP_PASSWORD` läuft der Dev-Modus – die 2FA-Codes erscheinen dann direkt im Browser und im Log (`docker compose logs -f web`). Damit lassen sich alle drei Anmeldemodi ohne Mailserver testen.
 >
-> **Eigenes `APP_SECRET`:** In der `.env` steht ein Beispielwert. Für den echten Betrieb einen eigenen erzeugen: `python3 -c "import secrets; print(secrets.token_hex(32))"`. Der Wert muss stabil bleiben, sonst lassen sich vorhandene TOTP-Secrets nicht mehr entschlüsseln.
+> **Eigenes `APP_SECRET`:** In der `.env` ist der Wert bewusst leer. Ohne ihn startet die App mit einem zufälligen Geheimnis – dann überleben TOTP-Secrets keinen Neustart. Für den echten Betrieb einen eigenen Wert erzeugen und eintragen: `python3 -c "import secrets; print(secrets.token_hex(32))"`. Der Wert muss stabil bleiben, sonst lassen sich vorhandene TOTP-Secrets nicht mehr entschlüsseln.
 
 > `db web` startet bewusst nur Datenbank und Webanwendung. Der `cloudflared`-Container braucht ein Tunnel-Token und würde ohne dieses in einer Fehlerschleife laufen. Wenn du den Tunnel nutzen willst, siehe nächster Abschnitt.
 
@@ -80,11 +81,13 @@ Die App ist dann unter `https://<deine-domain>` erreichbar (lokal weiterhin unte
 | `SMTP_PORT` | `587` (STARTTLS) oder `465` (SSL) | `587` |
 | `SMTP_USER` / `SMTP_PASSWORD` | SMTP-Zugangsdaten | leer |
 | `SMTP_FROM` | Absenderadresse | `noreply@smoothingo.com` |
-| `APP_SECRET` | Server-Geheimnis für HMAC (2FA-Codes) und Verschlüsselung (TOTP-Secret) | zufälliger 64-Zeichen-Wert |
+| `APP_SECRET` | Server-Geheimnis für HMAC (2FA-Codes) und Verschlüsselung (TOTP-Secret). Leer = zufällig erzeugt (nur für Wegwerf-Demos, TOTP-Secrets überleben keinen Neustart) | zufällig |
 | `SESSION_COOKIE_SECURE` | Session-Cookie nur über HTTPS senden | `true` |
 | `LOGIN_RESTRICTION_ENABLED` | `true` aktiviert die Zeitbeschränkung | `false` |
 | `LOGIN_ALLOWED_START_HOUR` | Erste erlaubte Stunde (0–23) | `6` |
 | `LOGIN_ALLOWED_END_HOUR` | Erste *nicht mehr* erlaubte Stunde (0–23) | `22` |
+| `RATE_LIMIT_ENABLED` | Rate-Limiting für Login/Registrierung/Reset | `true` |
+| `TRUST_PROXY_HEADERS` | echte Client-IP aus `X-Forwarded-For` lesen (nur hinter Proxy) | `false` |
 
 Nach Änderungen an der `.env` die Container **neu erstellen**:
 
@@ -199,8 +202,24 @@ Ein 6-stelliger 2FA-Code hat nur 900.000 Kombinationen – ohne Bremse wäre er 
 | Vorgang | Regel |
 |---|---|
 | 2FA-Code | nach **5 Fehlversuchen** wird der Code ungültig (HTTP 429) |
+| Reset-Code | dieselbe Bremse: nach **5 Fehlversuchen** ungültig (HTTP 429) |
+| TOTP-Code | nach **5 Fehlversuchen** für 15 Minuten gesperrt (HTTP 429) |
+| TOTP-Replay | jeder 30-Sekunden-Schritt wird nur **einmal** akzeptiert |
 | Vergleich | mit `secrets.compare_digest` (konstante Laufzeit) |
-| Passwort | Argon2id – rund 50 ms pro Versuch |
+| Passwort | Argon2id – rund 50 ms pro Versuch, mindestens 8 Zeichen (serverseitig geprüft) |
+
+Zusätzlich bremst ein **In-Memory-Rate-Limiter** (gleitendes Zeitfenster) die Endpunkte:
+
+| Endpunkt | Limit |
+|---|---|
+| `/api/login` | 20 Versuche / 15 min pro IP, 10 / 15 min pro E-Mail |
+| `/api/register` | 10 / Stunde pro IP |
+| `/api/forgot-password` | 5 / 15 min pro IP, 2 / Stunde pro E-Mail (verhindert Mail-Bombing) |
+| `/api/verify-2fa`, `/api/reset-password` | 30 / 15 min pro IP |
+
+Der Limiter zählt **pro Prozess**. Für mehrere Uvicorn-Worker müsste der Zustand geteilt werden (z. B. Redis) – bei diesem Setup läuft bewusst ein Prozess.
+
+> **Wichtig hinter einem Proxy:** Steht die App hinter dem Cloudflare Tunnel, kommen alle Requests von der Tunnel-IP. Dann `TRUST_PROXY_HEADERS=true` setzen, damit die echte Client-IP aus `X-Forwarded-For` gelesen wird. Bei direkt erreichbarem Port 5000 muss der Wert `false` bleiben – sonst kann jeder den Header selbst setzen.
 
 Für das Passwort ist keine eigene Bremse nötig: Der Server rechnet einen **Dummy-Argon2id-Vergleich** auch dann, wenn die E-Mail unbekannt ist. Sonst wäre die Antwortzeit ein Rauschanzeiger:
 
@@ -222,6 +241,7 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 | Sessions beim Passwort-Reset | alle bestehenden Sessions des Users werden beendet |
 | Sicherheits-Header | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy` |
 | CSP | `script-src 'self'` – kein Inline-JavaScript. Deshalb liegt der Code der Willkommensseite in `static/welcome.js` statt im HTML |
+| Container | Prozess läuft als Benutzer `app` (UID 10001), `cap_drop: ALL`, `no-new-privileges` |
 
 > **Hinweis zu Cloudflare:** Der Tunnel injiziert ein eigenes Script in die HTML-Ausgabe (Bot-Erkennung). Die strikte CSP blockiert es – die App ist davon nicht betroffen. Falls es doch nötig wird: `script-src 'self' 'unsafe-inline'`.
 
@@ -229,7 +249,7 @@ So lässt sich nicht herausfinden, welche E-Mail-Adressen registriert sind.
 
 Die HTML-Seiten werden mit `Cache-Control: no-cache` ausgeliefert: Der Browser fragt damit bei jedem Aufruf nach, ob sich etwas geändert hat, und lädt die Seite notfalls neu. Ohne diese Angabe würde der Browser eine alte Kopie behalten – und damit auch eine alte `app.js` mit altem Code.
 
-Die statischen Dateien selbst (`app.js`, `style.css`) bekommen die Versionsnummer direkt in der URL (`app.js?v=6`). Wird eine davon geändert, zählt man die Nummer in `templates/index.html` hoch – dann ist der neue Stand garantiert geladen.
+Die statischen Dateien selbst (`app.js`, `style.css`) bekommen die Versionsnummer direkt in der URL (`app.js?v=9`). Wird eine davon geändert, zählt man die Nummer in `templates/index.html` hoch – dann ist der neue Stand garantiert geladen.
 
 ### 6. Was in der Datenbank steht – und was nicht
 
@@ -316,7 +336,7 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 | Registrierung schlägt mit „E-Mail ist bereits registriert" fehl | Die E-Mail existiert schon, das Passwort passt aber nicht. Mit dem **richtigen** Passwort kann die Sicherheitsstufe geändert werden – oder man meldet sich normal an bzw. setzt das Passwort zurück. |
 | Authenticator-Code wird abgelehnt | Uhrzeit von Server und Handy synchronisieren (Toleranz: ±30 Sekunden). |
 | Login meldet „zu dieser Uhrzeit gesperrt" | `LOGIN_RESTRICTION_ENABLED=false` setzen oder die erlaubten Stunden anpassen. |
-| Änderungen an `static/app.js` greifen nicht | Die Script-URL enthält eine Versionsnummer in `templates/index.html` – nach einer Änderung dort hochzählen (z. B. `app.js?v=7`). Das HTML selbst wird mit `Cache-Control: no-cache` immer neu validiert, der Browser holt sich also zuverlässig die neue Version. |
+| Änderungen an `static/app.js` greifen nicht | Die Script-URL enthält eine Versionsnummer in `templates/index.html` – nach einer Änderung dort hochzählen (z. B. `app.js?v=9`). Das HTML selbst wird mit `Cache-Control: no-cache` immer neu validiert, der Browser holt sich also zuverlässig die neue Version. |
 
 ## Architektur
 
@@ -325,6 +345,36 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 - **Passwörter:** Argon2id auf dem Server, mit zufälligem Salt pro User – aus der Datenbank lässt sich ein Passwort nicht zurückrechnen.
 - **Cloudflared** stellt die Verbindung über den Cloudflare Tunnel her (keine offenen Ports nötig).
 
+### Dateien
+
+| Datei | Aufgabe |
+|---|---|
+| `app.py` | FastAPI-App: Sicherheits-Header und die Endpunkte |
+| `auth.py` | gemeinsame Abläufe: Sessions, E-Mail-Codes, TOTP inkl. Replay-Schutz |
+| `ratelimit.py` | In-Memory-Limiter (gleitendes Zeitfenster) |
+| `responses.py` | einheitliche Fehlerantworten (`error`, `too_many_requests`) |
+| `security.py` | Argon2id, HMAC, Verschlüsselung, Passwort-Regeln |
+| `mailer.py` | SMTP-Versand und Dev-Modus (Code nur im Log) |
+| `config.py` | Grenzwerte und Umgebungsvariablen an einer Stelle |
+| `database.py` | Engine, Session-Context-Manager, Schema-Upgrade |
+| `models.py` | Tabellen `users`, `sessions`, `email_otps` |
+
+Die Trennung ist bewusst flach: keine Service-Klassen, keine Vererbungshierarchie –
+nur Module mit klaren Aufgaben. `app.py` enthält deshalb nur noch die Routen.
+
+### Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest          # 27 Tests, laufen gegen eine temporäre SQLite-Datei
+ruff check .    # Stil- und Import-Prüfung
+```
+
+Die Tests decken Registrierung, Login, Session, E-Mail-2FA, TOTP inkl.
+Replay-Schutz, Passwort-Reset, die serverseitige Passwortregel, alle
+Rate-Limits und die Migration alter Datenbestände ab. Sie brauchen weder
+MySQL noch einen Mailserver.
+
 ### Konfigurations-Ebenen
 
 | Ebene | Datei | Aufgabe |
@@ -332,7 +382,7 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 | Defaults | `docker-compose.yml` | Fallback-Werte via `${VAR:-default}` |
 | Secrets | `.env` (gitignored) | überschreibt die Defaults |
 | Vorlage | `.env.example` | reine Dokumentation, wirkt **nicht** zur Laufzeit |
-| Laufzeit | Container-ENV | wird von `os.environ` in `app.py` gelesen |
+| Laufzeit | Container-ENV | wird in `config.py` aus `os.environ` gelesen |
 
 Die App liest die `.env` **nicht selbst** – sie kennt nur `os.environ`. Alle SMTP-Werte stehen deshalb ausschließlich in der `.env`, im Code ist nichts hart verdrahtet.
 
@@ -351,4 +401,4 @@ Die App liest die `.env` **nicht selbst** – sie kennt nur `os.environ`. Alle S
 | POST | `/api/reset-password` | Neues Passwort mit Reset-Code setzen |
 | POST | `/api/logout` | Abmelden |
 
-Statuscodes der Fehlerfälle: `400` (Eingabe falsch), `401` (E-Mail/Passwort falsch oder Konto existiert schon), `403` (Login gesperrt), `404` (unbekannt), `429` (zu viele 2FA-Versuche), `500` (Serverfehler).
+Statuscodes der Fehlerfälle: `400` (Eingabe falsch), `401` (E-Mail/Passwort falsch oder Konto existiert schon), `403` (Login gesperrt), `429` (zu viele 2FA-/Reset-Versuche oder Rate-Limit, inkl. `Retry-After`), `500` (Serverfehler).

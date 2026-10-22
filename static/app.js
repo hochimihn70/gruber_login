@@ -71,12 +71,19 @@ const VIEW_TITLES = {
 
 
 // Schaltet zwischen den Views um
+const VIEW_ELEMENTS = {
+  'main': mainView,
+  'register': registerView,
+  'totp-setup': totpSetupView,
+  'two-factor': twoFactorView,
+  'forgot': forgotView
+};
+
+
 function showView(viewName) {
-  mainView.style.display = viewName === 'main' ? 'block' : 'none';
-  registerView.style.display = viewName === 'register' ? 'block' : 'none';
-  totpSetupView.style.display = viewName === 'totp-setup' ? 'block' : 'none';
-  twoFactorView.style.display = viewName === 'two-factor' ? 'block' : 'none';
-  forgotView.style.display = viewName === 'forgot' ? 'block' : 'none';
+  Object.entries(VIEW_ELEMENTS).forEach(([name, element]) => {
+    if (element) element.style.display = name === viewName ? 'block' : 'none';
+  });
   if (pageTitle) pageTitle.textContent = VIEW_TITLES[viewName] || 'Login';
   showMessage('', false);
 }
@@ -122,10 +129,62 @@ async function postJSON(url, payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
-  const data = await response.json();
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (e) {
+    // z. B. 500 mit HTML-Fehlerseite -> kein JSON
+    data = {};
+  }
   data.ok = response.ok;
   data.httpStatus = response.status;      // HTTP-Code (401, 403, 500 ...) getrennt vom App-Status
   return data;
+}
+
+
+// API-Aufruf mit einheitlicher Meldung, wenn der Server nicht erreichbar ist.
+// Gibt null zurück, wenn der Aufruf fehlgeschlagen ist.
+async function apiCall(url, payload) {
+  try {
+    return await postJSON(url, payload);
+  } catch (e) {
+    showMessage('Der Server ist nicht erreichbar.', true);
+    return null;
+  }
+}
+
+
+// Wechselt in die 2FA-Maske - genutzt von Login und Registrierung.
+function enterTwoFactor(email, result) {
+  pendingEmail = email;
+  showView('two-factor');
+  hideDevCode();
+
+  if (result.method === 'totp') {
+    twoFactorInfo.textContent = 'Gib den 6-stelligen Code aus deiner Authenticator-App (z. B. Google Authenticator) ein:';
+  } else {
+    twoFactorInfo.textContent = `Ein 6-stelliger Bestätigungscode wurde an ${email} gesendet.`;
+  }
+
+  // Dev-Modus: kein SMTP konfiguriert -> Code direkt anzeigen und ins Feld eintragen
+  if (result.dev_code) {
+    showDevCode(result.dev_code, false);
+    twoFactorInfo.textContent = 'Dev-Modus: Es konnte keine E-Mail verschickt werden. Nutze den unten angezeigten Code.';
+    twoFactorForm.code.value = result.dev_code;
+  }
+
+  twoFactorForm.code.focus();
+  showMessage(result.message || '2FA-Bestätigung erforderlich.', false);
+}
+
+
+// Zeigt den QR-Code für die Authenticator-App.
+function enterTotpSetup(result) {
+  resetRegisterForm();
+  totpQrContainer.innerHTML = result.qr_svg;
+  totpSecretKey.textContent = result.totp_secret;
+  showView('totp-setup');
+  showMessage('Registrierung erfolgreich! Bitte richte deine Authenticator-App ein.', false);
 }
 
 
@@ -143,43 +202,22 @@ async function onLogin(event) {
     return;
   }
 
-  try {
-    // Das Passwort geht verschlüsselt (HTTPS) zum Server, der hasht es mit Argon2id.
-    const result = await postJSON('/api/login', { email, password });
+  // Das Passwort geht verschlüsselt (HTTPS) zum Server, der hasht es mit Argon2id.
+  const result = await apiCall('/api/login', { email, password });
+  if (!result) return;
 
-    if (!result.ok) {
-      showMessage(result.error || 'Login fehlgeschlagen.', true);
-      return;
-    }
+  if (!result.ok) {
+    showMessage(result.error || 'Login fehlgeschlagen.', true);
+    return;
+  }
 
-    // Fall 1: Nur Passwort (Erfolg)
-    if (result.status === 'success') {
-      window.location.href = result.redirect || '/welcome';
-    }
-    // Fall 2 & 3: 2FA-Code erforderlich (E-Mail oder Authenticator-App)
-    else if (result.status === '2fa_required') {
-      pendingEmail = email;
-      showView('two-factor');
-      hideDevCode();
-
-      if (result.method === 'email_otp') {
-        twoFactorInfo.textContent = `Ein 6-stelliger Bestätigungscode wurde an ${email} gesendet.`;
-      } else if (result.method === 'totp') {
-        twoFactorInfo.textContent = 'Gib den 6-stelligen Code aus deiner Authenticator-App (z. B. Google Authenticator) ein:';
-      }
-
-      // Dev-Modus: kein SMTP konfiguriert -> Code direkt anzeigen und ins Feld eintragen
-      if (result.dev_code) {
-        showDevCode(result.dev_code, false);
-        twoFactorInfo.textContent = 'Dev-Modus: Es konnte keine E-Mail verschickt werden. Nutze den unten angezeigten Code.';
-        twoFactorForm.code.value = result.dev_code;
-      }
-
-      twoFactorForm.code.focus();
-      showMessage(result.message || '2FA-Bestätigung erforderlich.', false);
-    }
-  } catch (e) {
-    showMessage('Der Server ist nicht erreichbar.', true);
+  // Fall 1: Nur Passwort (Erfolg)
+  if (result.status === 'success') {
+    window.location.href = result.redirect || '/welcome';
+  }
+  // Fall 2 & 3: 2FA-Code erforderlich (E-Mail oder Authenticator-App)
+  else if (result.status === '2fa_required') {
+    enterTwoFactor(email, result);
   }
 }
 
@@ -243,52 +281,32 @@ async function onRegister(event) {
   const authMethodInput = registerForm.querySelector('input[name="auth_method"]:checked');
   const auth_method = authMethodInput ? authMethodInput.value : 'password';
 
-  try {
-    const result = await postJSON('/api/register', { email, password, auth_method });
+  const result = await apiCall('/api/register', { email, password, auth_method });
+  if (!result) return;
 
-    if (!result.ok) {
-      showMessage(result.error || 'Registrierung fehlgeschlagen.', true);
-      // Konto existiert schon und das Passwort passt nicht -> Hinweis auf den Login geben
-      if (result.httpStatus === 401) {
-        showMessage(
-          (result.error || '') + ' → Du findest die Anmeldung unten auf der Login-Seite.',
-          true
-        );
-      }
-      return;
+  if (!result.ok) {
+    showMessage(result.error || 'Registrierung fehlgeschlagen.', true);
+    // Konto existiert schon und das Passwort passt nicht -> Hinweis auf den Login geben
+    if (result.httpStatus === 401) {
+      showMessage(
+        (result.error || '') + ' → Du findest die Anmeldung unten auf der Login-Seite.',
+        true
+      );
     }
+    return;
+  }
 
-    // Direkt in den Ablauf weiterleiten (kein toter Klick!):
-    if (result.status === 'success') {
-      window.location.href = result.redirect || '/welcome';
-    } else if (result.status === '2fa_required') {
-      pendingEmail = email;
-      resetRegisterForm();
-      showView('two-factor');
-      hideDevCode();
-      twoFactorInfo.textContent = `Ein 6-stelliger Bestätigungscode wurde an ${email} gesendet.`;
-
-      // Dev-Modus: kein SMTP konfiguriert -> Code direkt anzeigen und ins Feld eintragen
-      if (result.dev_code) {
-        showDevCode(result.dev_code, false);
-        twoFactorInfo.textContent = 'Dev-Modus: Es konnte keine E-Mail verschickt werden. Nutze den unten angezeigten Code.';
-        twoFactorForm.code.value = result.dev_code;
-      }
-
-      twoFactorForm.code.focus();
-      showMessage(result.message || 'Code an deine E-Mail gesendet!', false);
-    } else if (result.status === 'totp_setup') {
-      resetRegisterForm();
-      totpQrContainer.innerHTML = result.qr_svg;
-      totpSecretKey.textContent = result.totp_secret;
-      showView('totp-setup');
-      showMessage('Registrierung erfolgreich! Bitte richte deine Authenticator-App ein.', false);
-    } else {
-      showMessage(result.message || 'Erfolgreich!', false);
-      showView('main');
-    }
-  } catch (e) {
-    showMessage('Der Server ist nicht erreichbar.', true);
+  // Direkt in den Ablauf weiterleiten (kein toter Klick!):
+  if (result.status === 'success') {
+    window.location.href = result.redirect || '/welcome';
+  } else if (result.status === '2fa_required') {
+    resetRegisterForm();
+    enterTwoFactor(email, result);
+  } else if (result.status === 'totp_setup') {
+    enterTotpSetup(result);
+  } else {
+    showMessage(result.message || 'Erfolgreich!', false);
+    showView('main');
   }
 }
 
@@ -305,15 +323,13 @@ async function onVerify2FA(event) {
     return;
   }
 
-  try {
-    const result = await postJSON('/api/verify-2fa', { email: pendingEmail, code });
-    if (result.ok) {
-      window.location.href = result.redirect || '/welcome';
-    } else {
-      showMessage(result.error || 'Ungültiger Bestätigungscode.', true);
-    }
-  } catch (e) {
-    showMessage('Der Server ist nicht erreichbar.', true);
+  const result = await apiCall('/api/verify-2fa', { email: pendingEmail, code });
+  if (!result) return;
+
+  if (result.ok) {
+    window.location.href = result.redirect || '/welcome';
+  } else {
+    showMessage(result.error || 'Ungültiger Bestätigungscode.', true);
   }
 }
 
@@ -329,23 +345,27 @@ async function onRequestReset(event) {
     return;
   }
 
-  try {
-    const result = await postJSON('/api/forgot-password', { email });
-    resetEmail = email;
-    forgotStep1.style.display = 'none';
-    forgotStep2.style.display = 'block';
-    hideDevCode();
+  const result = await apiCall('/api/forgot-password', { email });
+  if (!result) return;
 
-    // Dev-Modus: kein SMTP konfiguriert -> Code direkt anzeigen und ins Feld eintragen
-    if (result.dev_code) {
-      showDevCode(result.dev_code, true);
-      forgotResetForm.code.value = result.dev_code;
-    }
-
-    showMessage(result.message || 'Code gesendet.', false);
-  } catch (e) {
-    showMessage('Der Server ist nicht erreichbar.', true);
+  // Fehler (z. B. 429) nicht als "Code gesendet" darstellen.
+  if (!result.ok) {
+    showMessage(result.error || 'Code konnte nicht gesendet werden.', true);
+    return;
   }
+
+  resetEmail = email;
+  forgotStep1.style.display = 'none';
+  forgotStep2.style.display = 'block';
+  hideDevCode();
+
+  // Dev-Modus: kein SMTP konfiguriert -> Code direkt anzeigen und ins Feld eintragen
+  if (result.dev_code) {
+    showDevCode(result.dev_code, true);
+    forgotResetForm.code.value = result.dev_code;
+  }
+
+  showMessage(result.message || 'Code gesendet.', false);
 }
 
 
@@ -363,25 +383,22 @@ async function onPerformReset(event) {
     return;
   }
 
-  try {
-    const result = await postJSON('/api/reset-password', {
-      email: resetEmail,
-      code,
-      new_password: newPassword
-    });
+  const result = await apiCall('/api/reset-password', {
+    email: resetEmail,
+    code,
+    new_password: newPassword
+  });
+  if (!result) return;
 
-    if (result.ok) {
-      forgotResetForm.reset();
-      forgotRequestForm.reset();
-      forgotStep2.style.display = 'none';
-      forgotStep1.style.display = 'block';
-      showView('main');
-      showMessage(result.message || 'Passwort geändert! Jetzt anmelden.', false);
-    } else {
-      showMessage(result.error || 'Fehler beim Zurücksetzen.', true);
-    }
-  } catch (e) {
-    showMessage('Der Server ist nicht erreichbar.', true);
+  if (result.ok) {
+    forgotResetForm.reset();
+    forgotRequestForm.reset();
+    forgotStep2.style.display = 'none';
+    forgotStep1.style.display = 'block';
+    showView('main');
+    showMessage(result.message || 'Passwort geändert! Jetzt anmelden.', false);
+  } else {
+    showMessage(result.error || 'Fehler beim Zurücksetzen.', true);
   }
 }
 
